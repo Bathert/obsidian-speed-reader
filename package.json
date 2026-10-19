@@ -1,0 +1,37 @@
+{
+  "name": "obsidian-speed-reader",
+  "version": "1.0.0",
+  "description": "Speed read your notes using Spritz-style RSVP with Optimal Recognition Point (ORP), smart pacing, chunking, and text-to-speech.",
+  "main": "main.js",
+  "scripts": {
+    "dev": "node esbuild.config.mjs",
+    "build": "node esbuild.config.mjs production",
+    "test": "node --experimental-strip-types --test tests/textParser.test.ts tests/speedEngine.test.ts"
+  },
+  "keywords": [
+    "obsidian",
+    "obsidian-plugin",
+    "speed-reading",
+    "rsvp",
+    "spritz",
+    "bionic-reading"
+  ],
+  "author": "Bathert",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Bathert/obsidian-speed-reader.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Bathert/obsidian-speed-reader/issues"
+  },
+  "homepage": "https://github.com/Bathert/obsidian-speed-reader#readme",
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "obsidian": "^1.14.4",
+    "tslib": "^2.8.1",
+    "typescript": "^7.0.2"
+  }
+}

@@ -1,0 +1,346 @@
+/* Obsidian Speed Reader (RSVP) Styles */
+
+.sr-modal-container {
+  max-width: 650px;
+  width: 90vw;
+  padding: 24px;
+  border-radius: 12px;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.35);
+  user-select: none;
+}
+
+/* Themes */
+.sr-modal-container.sr-theme-dark {
+  background-color: #1a1a1a !important;
+  color: #f0f0f0 !important;
+}
+
+.sr-modal-container.sr-theme-light {
+  background-color: #fafafa !important;
+  color: #1a1a1a !important;
+}
+
+.sr-modal-container.sr-theme-sepia {
+  background-color: #fbf0d9 !important;
+  color: #433422 !important;
+}
+
+/* Feature 3: Resume Banner */
+.sr-resume-banner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: var(--background-secondary-alt);
+  border-left: 3px solid var(--interactive-accent);
+  padding: 8px 12px;
+  border-radius: 6px;
+  margin-bottom: 16px;
+  font-size: 0.9em;
+}
+
+.sr-resume-btn-group {
+  display: flex;
+  gap: 6px;
+}
+
+/* Header */
+.sr-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--background-modifier-border);
+  padding-bottom: 10px;
+}
+
+.sr-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-title-name {
+  font-weight: 600;
+  font-size: 1.1em;
+  color: var(--text-normal);
+}
+
+.sr-title-meta {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+.sr-shortcuts-hint {
+  font-size: 0.75em;
+  color: var(--text-faint);
+  letter-spacing: 0.2px;
+}
+
+/* RSVP Frame */
+.sr-frame {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 20px;
+  margin: 10px 0 20px 0;
+  background: var(--background-secondary-alt);
+  border-radius: 8px;
+  min-height: 140px;
+}
+
+/* Guide Lines & Fixation Markers */
+.sr-guide {
+  position: relative;
+  width: 100%;
+  height: 2px;
+  background-color: var(--background-modifier-border);
+}
+
+.sr-notch {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 2px;
+  height: 8px;
+  background-color: var(--text-muted);
+}
+
+/* Spritz 35/65 Redicle alignment */
+.sr-redicle-spritz .sr-notch {
+  left: 35%;
+}
+
+.sr-notch-down {
+  top: 0;
+}
+
+.sr-notch-up {
+  bottom: 0;
+}
+
+/* Word Box */
+.sr-word-box {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  width: 100%;
+  height: 80px;
+  font-size: var(--sr-font-size, 44px);
+  font-family: var(--font-text);
+  letter-spacing: 0.5px;
+  line-height: 80px;
+  overflow: hidden;
+}
+
+.sr-word-part {
+  display: inline-block;
+  white-space: pre;
+}
+
+.sr-prefix {
+  flex: 1 1 0;
+  text-align: right;
+  color: var(--text-normal);
+}
+
+.sr-focus {
+  flex: 0 0 auto;
+  text-align: center;
+  font-weight: 700;
+  color: var(--interactive-accent);
+}
+
+.sr-suffix {
+  flex: 1 1 0;
+  text-align: left;
+  color: var(--text-normal);
+}
+
+/* Spritz Redicle 35/65 Alignment */
+.sr-align-spritz .sr-prefix {
+  flex: 0 0 35%;
+  text-align: right;
+}
+
+.sr-align-spritz .sr-focus {
+  flex: 0 0 auto;
+  text-align: center;
+}
+
+.sr-align-spritz .sr-suffix {
+  flex: 1 1 auto;
+  text-align: left;
+}
+
+/* Feature 2: Chunking & Bionic Mode */
+.sr-chunk-box {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 16px;
+  width: 100%;
+}
+
+.sr-chunk-word {
+  color: var(--text-normal);
+}
+
+.sr-chunk-word b {
+  color: var(--text-normal);
+  font-weight: 700;
+}
+
+/* Context Preview */
+.sr-context-preview {
+  font-size: 0.9em;
+  color: var(--text-muted);
+  text-align: center;
+  min-height: 1.5em;
+  margin-bottom: 20px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sr-context-preview b {
+  color: var(--text-normal);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Progress bar & meta */
+.sr-progress-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 24px;
+}
+
+.sr-progress-bar {
+  width: 100%;
+  height: 6px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--background-modifier-border);
+  border-radius: 3px;
+  outline: none;
+  cursor: pointer;
+  margin: 0;
+}
+
+.sr-progress-bar::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--interactive-accent);
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+
+.sr-progress-bar::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+
+.sr-progress-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+
+/* Controls */
+.sr-controls {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.sr-btn-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sr-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+.sr-icon-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.sr-play-btn {
+  width: 44px;
+  height: 44px;
+}
+
+.sr-play-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.sr-speed-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sr-small-btn {
+  font-size: 0.8em;
+  padding: 4px 8px;
+  height: 32px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.sr-wpm-badge {
+  font-size: 0.9em;
+  font-weight: 600;
+  min-width: 90px;
+  text-align: center;
+  padding: 4px 10px;
+  background: var(--background-secondary-alt);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 6px;
+  color: var(--text-normal);
+}
+
+/* Feature 5: Analytics Dashboard (Settings) */
+.sr-stats-dashboard {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  background-color: var(--background-secondary);
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 12px 0 20px 0;
+}
+
+.sr-stat-item {
+  font-size: 0.95em;
+  font-weight: 500;
+  color: var(--text-normal);
+}
+
+.sr-stat-highlight {
+  color: var(--interactive-accent);
+  font-weight: 600;
+}
