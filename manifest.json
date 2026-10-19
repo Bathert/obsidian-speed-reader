@@ -1,9 +1,9 @@
 {
-  "id": "obsidian-speed-reader",
+  "id": "rsvp-speed-reader",
   "name": "Speed Reader (RSVP)",
   "version": "1.0.0",
   "minAppVersion": "0.15.0",
-  "description": "Speed read your notes using Spritz-style RSVP with Optimal Recognition Point (ORP), smart pacing, chunking, and text-to-speech.",
+  "description": "Speed read notes using Spritz-style RSVP with Optimal Recognition Point (ORP), smart pacing, chunking, and text-to-speech.",
   "author": "Bathert",
   "authorUrl": "https://github.com/Bathert",
   "isDesktopOnly": false
