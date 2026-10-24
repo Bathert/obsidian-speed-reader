@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildSync } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 
-globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), fetch: undefined };
+globalThis.window = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: id => clearTimeout(id), fetch: undefined };
 const entry = fileURLToPath(new URL('../src/unrealSpeech.ts', import.meta.url));
 const code = buildSync({ entryPoints: [entry], bundle: true, platform: 'node', format: 'esm', write: false })
   .outputFiles[0].text;

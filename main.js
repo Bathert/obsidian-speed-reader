@@ -326,6 +326,8 @@ async function synthesizeSpeech(text, options, fetchImpl) {
   if (!request) {
     throw new UnrealSpeechError("network", "\u0412 \u044D\u0442\u043E\u043C \u043E\u043A\u0440\u0443\u0436\u0435\u043D\u0438\u0438 \u043D\u0435\u0442 fetch \u0434\u043B\u044F \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043A Unreal Speech.");
   }
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = controller ? window.setTimeout(() => controller.abort(), 2e4) : 0;
   const response = await limiter.schedule(async () => {
     var _a;
     try {
@@ -335,6 +337,7 @@ async function synthesizeSpeech(text, options, fetchImpl) {
           "Content-Type": "application/json",
           Authorization: `Bearer ${options.apiKey.trim()}`
         },
+        signal: controller == null ? void 0 : controller.signal,
         body: JSON.stringify({
           Text: payloadText,
           VoiceId: options.voiceId || "Scarlett",
@@ -345,10 +348,13 @@ async function synthesizeSpeech(text, options, fetchImpl) {
         })
       });
     } catch (error) {
+      const timedOut = error instanceof Error && error.name === "AbortError";
       throw new UnrealSpeechError(
         "network",
-        error instanceof Error ? `\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430: ${error.message}` : "\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430."
+        timedOut ? "Unreal Speech \u043D\u0435 \u043E\u0442\u0432\u0435\u0442\u0438\u043B \u0437\u0430 20 \u0441\u0435\u043A\u0443\u043D\u0434." : error instanceof Error ? `\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430: ${error.message}` : "\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430."
       );
+    } finally {
+      if (timeout && typeof window.clearTimeout === "function") window.clearTimeout(timeout);
     }
   });
   if (!response.ok) {
@@ -1640,8 +1646,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
           voiceId: this.settings.unrealSpeechVoiceId,
           wpm: this.currentWpm
         });
-        if (token !== this.speechToken || !this.isPlaying) return;
         this.settings.unrealSpeechCharsUsed += chunk.length;
+        if (token !== this.speechToken || !this.isPlaying) return;
         await this.playAudioBytes(audioBytes, token);
       } catch (error) {
         if (token !== this.speechToken) return;

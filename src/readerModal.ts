@@ -579,8 +579,9 @@ export class SpeedReaderModal extends Modal {
           voiceId: this.settings.unrealSpeechVoiceId,
           wpm: this.currentWpm,
         });
-        if (token !== this.speechToken || !this.isPlaying) return;
+        // The request is billed even if playback stopped meanwhile.
         this.settings.unrealSpeechCharsUsed += chunk.length;
+        if (token !== this.speechToken || !this.isPlaying) return;
         await this.playAudioBytes(audioBytes, token);
       } catch (error) {
         if (token !== this.speechToken) return;

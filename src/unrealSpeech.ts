@@ -214,6 +214,9 @@ export async function synthesizeSpeech(
     throw new UnrealSpeechError("network", "В этом окружении нет fetch для запросов к Unreal Speech.");
   }
 
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  const timeout = controller ? window.setTimeout(() => controller.abort(), 20000) : 0;
+
   const response = await limiter.schedule(async () => {
     try {
       return await request(UNREAL_SPEECH_ENDPOINT, {
@@ -222,6 +225,7 @@ export async function synthesizeSpeech(
           "Content-Type": "application/json",
           Authorization: `Bearer ${options.apiKey.trim()}`,
         },
+        signal: controller?.signal,
         body: JSON.stringify({
           Text: payloadText,
           VoiceId: options.voiceId || "Scarlett",
@@ -232,10 +236,13 @@ export async function synthesizeSpeech(
         }),
       });
     } catch (error) {
+      const timedOut = error instanceof Error && error.name === "AbortError";
       throw new UnrealSpeechError(
         "network",
-        error instanceof Error ? `Сеть недоступна: ${error.message}` : "Сеть недоступна."
+        timedOut ? "Unreal Speech не ответил за 20 секунд." : error instanceof Error ? `Сеть недоступна: ${error.message}` : "Сеть недоступна."
       );
+    } finally {
+      if (timeout && typeof window.clearTimeout === "function") window.clearTimeout(timeout);
     }
   });
 
