@@ -64,20 +64,36 @@ export function harness(data = null) {
   const plugin = new exports.Plugin(app);
   return { ...exports, app, plugin, calls, MarkdownView,
     command(id) { return calls.commands.find(command => command.id === id); },
-    setEditor({ text = 'one two one', selection = '', file = { path: 'folder/note.md', basename: 'note' } } = {}) {
+    setEditor({ text = 'one two one', selection = '', cursor = { line: 0, ch: 0 }, file = { path: 'folder/note.md', basename: 'note' } } = {}) {
       const cursorCalls = [];
+      const edits = [];
+      let value = text;
       const editor = {
         getSelection: () => selection,
-        getValue: () => text,
+        getValue: () => value,
+        getCursor: () => ({ ...cursor }),
+        posToOffset(pos) {
+          const lines = value.split('\n');
+          let offset = 0;
+          for (let i = 0; i < pos.line && i < lines.length; i++) offset += lines[i].length + 1;
+          return offset + pos.ch;
+        },
         offsetToPos(offset) {
-          const lines = text.slice(0, offset).split('\n');
+          const lines = value.slice(0, offset).split('\n');
           return { line: lines.length - 1, ch: lines.at(-1).length };
         },
         setCursor(pos) { cursorCalls.push({ type: 'cursor', ...pos }); },
         scrollIntoView(range, center) { cursorCalls.push({ type: 'scroll', range, center }); },
+        replaceRange(replacement, from, to) {
+          edits.push({ replacement, from, to });
+          const start = editor.posToOffset(from);
+          const end = editor.posToOffset(to);
+          value = value.slice(0, start) + replacement + value.slice(end);
+        },
+        setValue(next) { value = next; },
       };
       workspace.activeView = Object.assign(new MarkdownView(), { editor, file });
-      return { editor, view: workspace.activeView, cursorCalls };
+      return { editor, view: workspace.activeView, cursorCalls, edits, getValue: () => value };
     },
   };
 }

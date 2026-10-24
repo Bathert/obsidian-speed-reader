@@ -619,7 +619,7 @@ function cleanMarkdownWithOffsets(text) {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
   const replace = (pattern, replacement) => {
-    if (!new RegExp(pattern.source, pattern.flags.replace("g", "")).test(cleaned)) return;
+    if (!new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "")).test(cleaned)) return;
     const nextOffsets = [];
     const appendOffsets = (start2, end2) => {
       for (let index = start2; index < end2; index++) nextOffsets.push(offsets[index]);
@@ -632,7 +632,8 @@ function cleanMarkdownWithOffsets(text) {
       end = start2 + match.length;
       if (!replacement) return "";
       const group = Number(replacement.slice(1));
-      const localPattern = new RegExp(pattern.source, pattern.flags.replace("g", "") + "d");
+      const flags = pattern.flags.replace(/[gd]/g, "") + "d";
+      const localPattern = new RegExp(pattern.source, flags);
       const localMatch = localPattern.exec(match);
       const range = localMatch.indices[group];
       appendOffsets(start2 + range[0], start2 + range[1]);
@@ -665,7 +666,7 @@ function cleanMarkdownWithOffsets(text) {
   replace(/(?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}])/gu, "$1");
   replace(/~~(.*?)~~/g, "$1");
   replace(/^\s*>\s*/gm, "");
-  replace(/^[^\S\n]*\|[-:|^\S\n]+\|[^\S\n]*$/gm, "");
+  replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
   replace(/^\s*[-*+]\s+/gm, "");
   replace(/^\s*\d+\.\s+/gm, "");
@@ -1416,6 +1417,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.completed = false;
     this.finalChunkStart = null;
     this.hasInteracted = true;
+    this.rewoundWordsDebt = 0;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -1617,6 +1619,15 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (this.progressLabel) {
       this.progressLabel.setText(`${this.currentIndex + 1} / ${this.words.length} (${pct}%)`);
     }
+    if (this.tocSelectEl && this.headings.length > 0) {
+      let activeHeading = -1;
+      for (let i = 0; i < this.headings.length; i++) {
+        if (this.headings[i].wordIndex <= this.currentIndex) activeHeading = i;
+        else break;
+      }
+      const targetValue = activeHeading >= 0 ? String(this.headings[activeHeading].wordIndex) : "";
+      if (this.tocSelectEl.value !== targetValue) this.tocSelectEl.value = targetValue;
+    }
     this.updateTimeLeft();
     this.updateContext();
   }
@@ -1627,14 +1638,21 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   updateContext() {
     if (!this.contextEl) return;
-    const start = Math.max(0, this.currentIndex - 3);
-    const end = Math.min(this.words.length, this.currentIndex + 4);
+    const isPaused = !this.isPlaying;
+    const radius = isPaused ? 7 : 3;
+    const start = Math.max(0, this.currentIndex - radius);
+    const end = Math.min(this.words.length, this.currentIndex + radius + 1);
     this.contextEl.empty();
+    this.contextEl.toggleClass("sr-context-expanded", isPaused);
     if (start > 0) this.contextEl.appendText("... ");
     for (let i = start; i < end; i++) {
       if (i > start) this.contextEl.appendText(" ");
       if (i === this.currentIndex) {
         this.contextEl.createEl("b", { text: this.words[i].raw });
+      } else if (isPaused) {
+        const wordSpan = this.contextEl.createSpan({ text: this.words[i].raw, cls: "sr-context-word" });
+        const targetIndex = i;
+        wordSpan.onclick = () => this.goToWord(targetIndex);
       } else {
         this.contextEl.appendText(this.words[i].raw);
       }
@@ -1905,7 +1923,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   }
   /** Reads the whole note starting from the editor cursor. */
   speedReadFromCursor(editor, view) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     const content = editor.getValue();
     if (!content || !content.trim()) {
       new import_obsidian3.Notice("Speed reader: Active note is empty.");
@@ -1922,16 +1940,10 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       }
       cursorOffset += pos.ch;
     }
-    const words = parseWords(content, {
-      pauseOnPunctuation: this.settings.pauseOnPunctuation,
-      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
-      commaPauseMultiplier: this.settings.commaPauseMultiplier,
-      spritzVariableTiming: this.settings.spritzVariableTiming,
-      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
-    });
+    const words = parseWords(content, this.parseOptions());
     const initialIndex = findWordIndexAtOffset(words, cursorOffset);
-    const noteKey = ((_b = view.file) == null ? void 0 : _b.path) || ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note";
-    new SpeedReaderModal(this.app, this, content, ((_d = view.file) == null ? void 0 : _d.basename) || "Active Note", noteKey, {
+    const noteKey = ((_a = view.file) == null ? void 0 : _a.path) || ((_b = view.file) == null ? void 0 : _b.basename) || "Active Note";
+    new SpeedReaderModal(this.app, this, content, ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note", noteKey, {
       initialIndex,
       onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
       onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
@@ -1943,8 +1955,15 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       return false;
     }
     const doc = editor.getValue();
-    const startOffset = startWord.charOffset;
-    const endOffset = Math.min(doc.length, endWord.charOffset + endWord.raw.length);
+    const leading = (word_ = "") => {
+      var _a, _b;
+      return (_b = (_a = word_.match(/^[^\p{L}\p{N}]*/u)) == null ? void 0 : _a[0].length) != null ? _b : 0;
+    };
+    const startOffset = Math.max(0, startWord.charOffset - leading(startWord.raw));
+    const endOffset = Math.min(
+      doc.length,
+      endWord.charOffset - leading(endWord.raw) + endWord.raw.length
+    );
     if (startOffset < 0 || endOffset <= startOffset) return false;
     const slice = doc.slice(startOffset, endOffset);
     if (!slice.trim() || slice.includes("\n\n")) return false;
@@ -1962,7 +1981,9 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   }
   syncEditorCursor(editor, rawWord, charOffset) {
     if (typeof charOffset === "number" && charOffset >= 0) {
-      const pos = editor.offsetToPos(charOffset);
+      const docLength = editor.getValue().length;
+      const safeOffset = Math.min(Math.max(0, charOffset), docLength);
+      const pos = editor.offsetToPos(safeOffset);
       editor.setCursor(pos);
       editor.scrollIntoView({ from: pos, to: pos }, true);
       return;
@@ -1978,6 +1999,20 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       editor.scrollIntoView({ from: pos, to: pos }, true);
     }
   }
+  /** Parser options shared by every path that only needs word positions. */
+  parseOptions() {
+    var _a;
+    return {
+      pauseOnPunctuation: this.settings.pauseOnPunctuation,
+      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
+      commaPauseMultiplier: this.settings.commaPauseMultiplier,
+      pauseOnParagraphs: this.settings.pauseOnParagraphs,
+      paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
+      pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
+      spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
+    };
+  }
   /** Updates the status bar reading estimate for the active note. */
   updateStatusBar() {
     var _a, _b;
@@ -1992,12 +2027,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     if (!(activeView == null ? void 0 : activeView.editor)) return hide();
     const content = activeView.editor.getValue();
     if (!content || !content.trim()) return hide();
-    const words = parseWords(content, {
-      pauseOnPunctuation: false,
-      sentencePauseMultiplier: 1,
-      commaPauseMultiplier: 1,
-      spritzVariableTiming: false
-    });
+    const words = parseWords(content, this.parseOptions());
     if (words.length === 0) return hide();
     const noteKey = ((_a = activeView.file) == null ? void 0 : _a.path) || ((_b = activeView.file) == null ? void 0 : _b.basename) || "";
     const saved = noteKey && this.settings.rememberProgress ? this.settings.noteProgress[noteKey] : null;

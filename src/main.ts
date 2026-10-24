@@ -336,13 +336,7 @@ export default class SpeedReaderPlugin extends Plugin {
       cursorOffset += pos.ch;
     }
 
-    const words = parseWords(content, {
-      pauseOnPunctuation: this.settings.pauseOnPunctuation,
-      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
-      commaPauseMultiplier: this.settings.commaPauseMultiplier,
-      spritzVariableTiming: this.settings.spritzVariableTiming,
-      orpWidth: this.settings.orpWidth ?? 1,
-    });
+    const words = parseWords(content, this.parseOptions());
     const initialIndex = findWordIndexAtOffset(words, cursorOffset);
     const noteKey = view.file?.path || view.file?.basename || "Active Note";
 
@@ -365,8 +359,14 @@ export default class SpeedReaderPlugin extends Plugin {
       return false;
     }
     const doc = editor.getValue();
-    const startOffset = startWord.charOffset;
-    const endOffset = Math.min(doc.length, endWord.charOffset + endWord.raw.length);
+    // charOffset marks the first letter of the word, while raw may carry
+    // quotes or brackets around it: expand the range to the whole token.
+    const leading = (word_ = "") => word_.match(/^[^\p{L}\p{N}]*/u)?.[0].length ?? 0;
+    const startOffset = Math.max(0, startWord.charOffset - leading(startWord.raw));
+    const endOffset = Math.min(
+      doc.length,
+      endWord.charOffset - leading(endWord.raw) + endWord.raw.length
+    );
     if (startOffset < 0 || endOffset <= startOffset) return false;
 
     const slice = doc.slice(startOffset, endOffset);
@@ -390,7 +390,10 @@ export default class SpeedReaderPlugin extends Plugin {
     // in the note, so the cursor lands on the word being read -- not on the
     // first identical word in the document.
     if (typeof charOffset === "number" && charOffset >= 0) {
-      const pos = editor.offsetToPos(charOffset);
+      // The note may have been edited while the reader was open.
+      const docLength = editor.getValue().length;
+      const safeOffset = Math.min(Math.max(0, charOffset), docLength);
+      const pos = editor.offsetToPos(safeOffset);
       editor.setCursor(pos);
       editor.scrollIntoView({ from: pos, to: pos }, true);
       return;
@@ -411,6 +414,29 @@ export default class SpeedReaderPlugin extends Plugin {
     }
   }
 
+  /** Parser options shared by every path that only needs word positions. */
+  private parseOptions(): {
+    pauseOnPunctuation: boolean;
+    sentencePauseMultiplier: number;
+    commaPauseMultiplier: number;
+    pauseOnParagraphs: boolean;
+    paragraphPauseMultiplier: number;
+    pauseOnNumbersAndAcronyms: boolean;
+    spritzVariableTiming: boolean;
+    orpWidth: number;
+  } {
+    return {
+      pauseOnPunctuation: this.settings.pauseOnPunctuation,
+      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
+      commaPauseMultiplier: this.settings.commaPauseMultiplier,
+      pauseOnParagraphs: this.settings.pauseOnParagraphs,
+      paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
+      pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
+      spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: this.settings.orpWidth ?? 1,
+    };
+  }
+
   /** Updates the status bar reading estimate for the active note. */
   updateStatusBar() {
     if (!this.statusBarEl) return;
@@ -428,12 +454,7 @@ export default class SpeedReaderPlugin extends Plugin {
     const content = activeView.editor.getValue();
     if (!content || !content.trim()) return hide();
 
-    const words = parseWords(content, {
-      pauseOnPunctuation: false,
-      sentencePauseMultiplier: 1,
-      commaPauseMultiplier: 1,
-      spritzVariableTiming: false,
-    });
+    const words = parseWords(content, this.parseOptions());
     if (words.length === 0) return hide();
 
     const noteKey = activeView.file?.path || activeView.file?.basename || "";

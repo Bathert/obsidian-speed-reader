@@ -240,3 +240,40 @@ test('trainer mode raises the target speed every configured interval up to the c
   for (let i = 0; i < 6; i++) h.tick();
   assert.equal(h.modal.currentWpm, 315);
 });
+
+test('paused context shows 15 words and clicking one jumps to it', () => {
+  const words = Array.from({ length: 30 }, (_, i) => `w${i + 1}`);
+  const h = readerHarness(words.join(' '), { enableRampUp: false });
+  h.modal.goToWord(10);
+  const box = h.modal.contextEl;
+  assert.equal(box.hasClass('sr-context-expanded'), true);
+  const clickable = box.all('span').filter(span => span.hasClass('sr-context-word'));
+  assert.equal(clickable.length, 14, '7 words before and 7 after, current one is bold');
+  const target = clickable[clickable.length - 1];
+  target.onclick();
+  assert.equal(h.modal.currentIndex, 17);
+});
+
+test('table of contents follows the current chapter while seeking', () => {
+  const h = readerHarness('# Глава первая\n\nТекст.\n\n## Раздел второй\n\nЕщё немного текста.', { enableRampUp: false });
+  const second = h.modal.headings[1];
+  h.modal.goToWord(second.wordIndex + 1);
+  assert.equal(h.modal.tocSelectEl.value, String(second.wordIndex));
+  h.modal.goToWord(0);
+  assert.equal(h.modal.tocSelectEl.value, String(h.modal.headings[0].wordIndex));
+});
+
+test('manual seeking clears the rewind debt so new words are counted', () => {
+  const words = Array.from({ length: 40 }, (_, i) => `слово${i + 1}`);
+  const h = readerHarness(words.join(' '), { enableRampUp: false, rewindOnPause: true, rewindOnPauseWords: 3 });
+  h.modal.togglePlay();
+  for (let i = 0; i < 4; i++) h.tick();
+  h.modal.pause(true);
+  assert.equal(h.modal.rewoundWordsDebt, 3);
+  const before = h.modal.sessionWordsRead;
+  h.modal.goToWord(20);
+  assert.equal(h.modal.rewoundWordsDebt, 0);
+  h.modal.togglePlay();
+  h.tick();
+  assert.equal(h.modal.sessionWordsRead, before + 1);
+});

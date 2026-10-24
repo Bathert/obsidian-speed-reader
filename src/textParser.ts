@@ -48,7 +48,7 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   const replace = (pattern: RegExp, replacement: string): void => {
     // On a clean note most patterns never match: skip copying the whole
     // offset array for each of them.
-    if (!new RegExp(pattern.source, pattern.flags.replace("g", "")).test(cleaned)) return;
+    if (!new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "")).test(cleaned)) return;
     const nextOffsets: number[] = [];
     const appendOffsets = (start: number, end: number): void => {
       for (let index = start; index < end; index++) nextOffsets.push(offsets[index]);
@@ -63,7 +63,8 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
       const group = Number(replacement.slice(1));
       // Re-execute on this match to obtain the retained group's exact position,
       // even when hidden link targets contain the same text as their label.
-      const localPattern = new RegExp(pattern.source, pattern.flags.replace("g", "") + "d");
+      const flags = pattern.flags.replace(/[gd]/g, "") + "d";
+      const localPattern = new RegExp(pattern.source, flags);
       const localMatch = localPattern.exec(match) as (RegExpExecArray & { indices: [number, number][] }) | null;
       const range = localMatch!.indices[group];
       appendOffsets(start + range[0], start + range[1]);
@@ -131,7 +132,7 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   replace(/^\s*>\s*/gm, "");
 
   // Remove markdown table separator lines |---|---|
-  replace(/^[^\S\n]*\|[-:|^\S\n]+\|[^\S\n]*$/gm, "");
+  replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
 
   // Remove task list checkboxes like - [ ] or - [x]
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");

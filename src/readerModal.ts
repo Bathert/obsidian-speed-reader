@@ -662,6 +662,8 @@ export class SpeedReaderModal extends Modal {
     this.completed = false;
     this.finalChunkStart = null;
     this.hasInteracted = true;
+    // A manual jump invalidates the rewind compensation from the old position.
+    this.rewoundWordsDebt = 0;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -909,6 +911,17 @@ export class SpeedReaderModal extends Modal {
       this.progressLabel.setText(`${this.currentIndex + 1} / ${this.words.length} (${pct}%)`);
     }
 
+    // Follow the current chapter in the table of contents.
+    if (this.tocSelectEl && this.headings.length > 0) {
+      let activeHeading = -1;
+      for (let i = 0; i < this.headings.length; i++) {
+        if (this.headings[i].wordIndex <= this.currentIndex) activeHeading = i;
+        else break;
+      }
+      const targetValue = activeHeading >= 0 ? String(this.headings[activeHeading].wordIndex) : "";
+      if (this.tocSelectEl.value !== targetValue) this.tocSelectEl.value = targetValue;
+    }
+
     this.updateTimeLeft();
     this.updateContext();
   }
@@ -921,16 +934,24 @@ export class SpeedReaderModal extends Modal {
 
   private updateContext() {
     if (!this.contextEl) return;
-    const start = Math.max(0, this.currentIndex - 3);
-    const end = Math.min(this.words.length, this.currentIndex + 4);
+    // Paused: 15 clickable words around the current one; playing: a compact line.
+    const isPaused = !this.isPlaying;
+    const radius = isPaused ? 7 : 3;
+    const start = Math.max(0, this.currentIndex - radius);
+    const end = Math.min(this.words.length, this.currentIndex + radius + 1);
 
     // Built as DOM nodes on purpose: note text must never be parsed as HTML.
     this.contextEl.empty();
+    this.contextEl.toggleClass("sr-context-expanded", isPaused);
     if (start > 0) this.contextEl.appendText("... ");
     for (let i = start; i < end; i++) {
       if (i > start) this.contextEl.appendText(" ");
       if (i === this.currentIndex) {
         this.contextEl.createEl("b", { text: this.words[i].raw });
+      } else if (isPaused) {
+        const wordSpan = this.contextEl.createSpan({ text: this.words[i].raw, cls: "sr-context-word" });
+        const targetIndex = i;
+        wordSpan.onclick = () => this.goToWord(targetIndex);
       } else {
         this.contextEl.appendText(this.words[i].raw);
       }

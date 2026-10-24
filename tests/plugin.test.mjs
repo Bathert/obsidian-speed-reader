@@ -194,3 +194,26 @@ test('self-check success notice counts only verified steps', async () => {
   assert.ok(messages.some(message => /OK$/.test(message)), `expected an OK notice, got ${JSON.stringify(messages)}`);
   assert.ok(messages.some(message => /пропущено/.test(message)), 'DOM-less harness must report the skipped window check');
 });
+
+test('highlight range wraps the whole quoted sentence including edge punctuation', async () => {
+  const h = harness(); await h.plugin.onload();
+  const text = 'Первое предложение. «Второе слово здесь.» Третье.';
+  h.setEditor({ text });
+  h.command('speed-read-whole-note').editorCallback(h.app.workspace.activeView.editor, h.app.workspace.activeView);
+  const modal = h.calls.modals[0];
+  const start = { raw: '«Второе', prefix: '«В', focusChar: 'т', suffix: 'орое', delayMultiplier: 1, charOffset: text.indexOf('Второе') };
+  const end = { raw: 'здесь.»', prefix: 'зд', focusChar: 'е', suffix: 'сь.»', delayMultiplier: 1, charOffset: text.indexOf('здесь') };
+  const applied = modal.onHighlightSentence(start, end, 'Второе слово здесь.');
+  assert.equal(applied, true);
+  const edit = h.calls.modals.length && h.app.workspace.activeView.editor;
+  assert.ok(modal);
+  assert.equal(edit.getValue(), 'Первое предложение. ==«Второе слово здесь.»== Третье.');
+});
+
+test('speed read from Cursor starts at the word under the editor cursor', async () => {
+  const h = harness(); await h.plugin.onload();
+  h.setEditor({ text: 'one two three four', cursor: { line: 0, ch: 8 } });
+  h.command('speed-read-from-cursor').editorCallback(h.app.workspace.activeView.editor, h.app.workspace.activeView);
+  assert.equal(h.calls.modals.length, 1);
+  assert.equal(h.calls.modals[0].initialIndex, 2);
+});

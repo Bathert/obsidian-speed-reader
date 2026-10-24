@@ -129,3 +129,28 @@ describe("speedEngine & i18n - sentence bounds and localization", () => {
     assert.ok(I18N.ru.resumeBtn && I18N.en.resumeBtn);
   });
 });
+
+describe("textParser - table cleanup regressions", () => {
+  it("removes spaced separator rows but keeps content rows", () => {
+    const input = "| a | b |\n| --- | :--- |\n| hello | world |";
+    const cleaned = cleanMarkdown(input);
+    assert.ok(!cleaned.includes("---"), "separator row must be removed");
+    assert.ok(cleaned.includes("hello"));
+    assert.ok(cleaned.includes("world"));
+  });
+
+  it("removes compact separators without eating a one-cell content row", () => {
+    const cleaned = cleanMarkdown("|---|\n|cell|");
+    assert.ok(!cleaned.includes("---"));
+    assert.ok(cleaned.includes("cell"));
+  });
+
+  it("keeps charOffset on the focused letter and leading punctuation in raw", () => {
+    const source = "Он сказал: «Слово» и ушёл.";
+    const word = parseWords(source, defaultOpts).find((item) => item.raw.includes("Слово"))!;
+    const leading = word.raw.match(/^[^\p{L}\p{N}]*/u)![0];
+    assert.equal(leading, "«");
+    assert.equal(source[word.charOffset! - leading.length], "«");
+    assert.match(source[word.charOffset!] ?? "", /\p{L}/u);
+  });
+});
