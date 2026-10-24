@@ -112,3 +112,7 @@ npm run test:coverage  # покрытие чистой логики
 ```
 
 Тесты покрывают расчёты темпа, разбор Markdown и смещения слов, настройки, команды плагина и поведение окна чтения (клавиши, кнопки, пауза, перемотка, сохранение места, озвучка, чанки, темы). Реальный звук TTS и отрисовка шрифтов проверяются только вручную в Obsidian.
+
+## License
+
+Mozilla Public License 2.0 (MPL-2.0). See [LICENSE](LICENSE). In short: you may use, modify, and redistribute the plugin, including in closed-source projects, but modifications to these MPL-covered files must stay under the MPL and be made available.
