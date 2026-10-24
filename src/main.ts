@@ -1,7 +1,20 @@
 import { Editor, MarkdownFileInfo, MarkdownView, Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SpeedReaderSettings, SpeedReaderSettingTab } from "./settings";
 import { SpeedReaderModal } from "./readerModal";
-import { calculateTimeSavedMinutes } from "./speedEngine";
+import { parseWords } from "./textParser";
+import {
+  calculateProgressPercent,
+  calculateTimeSavedMinutes,
+  calculateWordDelayMs,
+  findNextSentenceStart,
+} from "./speedEngine";
+
+/** One line of the built-in in-app diagnostics. */
+export interface SelfCheckResult {
+  name: string;
+  status: "ok" | "fail" | "skip";
+  detail?: string;
+}
 
 export default class SpeedReaderPlugin extends Plugin {
   settings: SpeedReaderSettings = DEFAULT_SETTINGS;
@@ -115,6 +128,113 @@ export default class SpeedReaderPlugin extends Plugin {
 
     // Settings tab
     this.addSettingTab(new SpeedReaderSettingTab(this.app, this));
+
+    // Command: built-in diagnostics, runnable without a terminal
+    this.addCommand({
+      id: "speed-reader-self-check",
+      name: "Run self-check",
+      callback: () => {
+        void this.showSelfCheck();
+      },
+    });
+  }
+
+  /** Pure-logic diagnostics: safe to run in a test harness without DOM. */
+  runSelfCheck(): SelfCheckResult[] {
+    const results: SelfCheckResult[] = [];
+    const check = (name: string, run: () => true | string) => {
+      try {
+        const result = run();
+        results.push({ name, status: result === true ? "ok" : "fail", detail: result === true ? undefined : String(result) });
+      } catch (error) {
+        results.push({ name, status: "fail", detail: error instanceof Error ? error.message : String(error) });
+      }
+    };
+
+    const timing = {
+      pauseOnPunctuation: false,
+      sentencePauseMultiplier: 1,
+      commaPauseMultiplier: 1,
+      spritzVariableTiming: false,
+      orpWidth: 1,
+    };
+
+    check("Markdown → слова", () => {
+      const words = parseWords("**Принц** и [[нищий|бедняк]]", timing);
+      if (words.length !== 3) return `ожидалось 3 слова, получено ${words.length}`;
+      if (words.some((word) => /[*[\]|]/.test(word.raw))) return "в слова попала разметка";
+      if (words.some((word) => word.prefix + word.focusChar + word.suffix !== word.raw)) return "слово разбито по ORP с потерей букв";
+      return true;
+    });
+
+    check("смещения слов в исходнике", () => {
+      const source = "---\ntags: [тест]\n---\nПринц и нищий";
+      const words = parseWords(source, timing);
+      const first = words[0];
+      if (!first || first.charOffset === undefined || first.charOffset < 20) return `смещение ${first?.charOffset}`;
+      if (source.slice(first.charOffset, first.charOffset + first.raw.length) !== first.raw) return "смещение не указывает на слово";
+      return true;
+    });
+
+    check("тайминги", () => {
+      if (calculateWordDelayMs(300, 1) !== 200) return `300 WPM → ${calculateWordDelayMs(300, 1)} мс вместо 200`;
+      if (calculateWordDelayMs(300, 2) !== 400) return "множитель паузы не применяется";
+      if (calculateWordDelayMs(0, 1) !== calculateWordDelayMs(60, 1)) return "скорость не ограничена снизу";
+      return true;
+    });
+
+    check("навигация по предложениям", () => {
+      const words = parseWords("Первое. Второе третье.", timing);
+      const next = findNextSentenceStart(words, 0);
+      if (words[next]?.raw !== "Второе") return `переход дал «${words[next]?.raw}»`;
+      if (findNextSentenceStart([], 0) !== 0) return "пустой текст ломает навигацию";
+      return true;
+    });
+
+    check("границы прогресса", () => {
+      if (calculateProgressPercent(0, 0) !== 0) return "пустой текст даёт не 0%";
+      if (calculateProgressPercent(10, 10) !== 100) return "конец текста даёт не 100%";
+      if (calculateProgressPercent(-5, 10) !== 0) return "отрицательная позиция даёт не 0%";
+      return true;
+    });
+
+    return results;
+  }
+
+  /** Self-check plus a real open/render/seek/close of the reader window. */
+  async showSelfCheck() {
+    const results = this.runSelfCheck();
+    const modal = new SpeedReaderModal(this.app, this, "Проверка окна чтения. Второе предложение здесь.", "Self-check", "");
+    try {
+      modal.open();
+      const contentEl = modal.contentEl;
+      if (!contentEl) {
+        results.push({ name: "окно чтения", status: "skip", detail: "нет доступа к DOM" });
+      } else {
+        const wordBox = contentEl.querySelector(".sr-word-box");
+        const label = contentEl.querySelector(".sr-progress-label")?.textContent ?? "";
+        if (!wordBox) results.push({ name: "окно чтения", status: "fail", detail: "не отрисовано слово" });
+        else if (!label.startsWith("1 / ")) results.push({ name: "окно чтения", status: "fail", detail: `подпись прогресса «${label}»` });
+        else results.push({ name: "окно чтения", status: "ok" });
+      }
+    } catch (error) {
+      results.push({ name: "окно чтения", status: "fail", detail: error instanceof Error ? error.message : String(error) });
+    } finally {
+      modal.close();
+    }
+
+    const failed = results.filter((result) => result.status === "fail");
+    const skipped = results.filter((result) => result.status === "skip");
+    const summary =
+      failed.length === 0
+        ? `✅ Проверка скорочтения: ${results.length - skipped.length} из ${results.length - skipped.length} OK`
+        : `❌ Проверка скорочтения: ${failed.length} ошибок\n` +
+          failed.map((result) => `• ${result.name}: ${result.detail ?? "сбой"}`).join("\n");
+
+    if (skipped.length > 0) {
+      new Notice(`⚠️ Проверка скорочтения: ${skipped.length} шагов пропущено`, 6000);
+    }
+    new Notice(summary, failed.length === 0 ? 6000 : 15000);
   }
 
   private speedReadActiveView() {

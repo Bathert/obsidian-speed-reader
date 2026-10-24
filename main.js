@@ -1279,6 +1279,102 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       })
     );
     this.addSettingTab(new SpeedReaderSettingTab(this.app, this));
+    this.addCommand({
+      id: "speed-reader-self-check",
+      name: "Run self-check",
+      callback: () => {
+        void this.showSelfCheck();
+      }
+    });
+  }
+  /** Pure-logic diagnostics: safe to run in a test harness without DOM. */
+  runSelfCheck() {
+    const results = [];
+    const check = (name, run) => {
+      try {
+        const result = run();
+        results.push({ name, status: result === true ? "ok" : "fail", detail: result === true ? void 0 : String(result) });
+      } catch (error) {
+        results.push({ name, status: "fail", detail: error instanceof Error ? error.message : String(error) });
+      }
+    };
+    const timing = {
+      pauseOnPunctuation: false,
+      sentencePauseMultiplier: 1,
+      commaPauseMultiplier: 1,
+      spritzVariableTiming: false,
+      orpWidth: 1
+    };
+    check("Markdown \u2192 \u0441\u043B\u043E\u0432\u0430", () => {
+      const words = parseWords("**\u041F\u0440\u0438\u043D\u0446** \u0438 [[\u043D\u0438\u0449\u0438\u0439|\u0431\u0435\u0434\u043D\u044F\u043A]]", timing);
+      if (words.length !== 3) return `\u043E\u0436\u0438\u0434\u0430\u043B\u043E\u0441\u044C 3 \u0441\u043B\u043E\u0432\u0430, \u043F\u043E\u043B\u0443\u0447\u0435\u043D\u043E ${words.length}`;
+      if (words.some((word) => /[*[\]|]/.test(word.raw))) return "\u0432 \u0441\u043B\u043E\u0432\u0430 \u043F\u043E\u043F\u0430\u043B\u0430 \u0440\u0430\u0437\u043C\u0435\u0442\u043A\u0430";
+      if (words.some((word) => word.prefix + word.focusChar + word.suffix !== word.raw)) return "\u0441\u043B\u043E\u0432\u043E \u0440\u0430\u0437\u0431\u0438\u0442\u043E \u043F\u043E ORP \u0441 \u043F\u043E\u0442\u0435\u0440\u0435\u0439 \u0431\u0443\u043A\u0432";
+      return true;
+    });
+    check("\u0441\u043C\u0435\u0449\u0435\u043D\u0438\u044F \u0441\u043B\u043E\u0432 \u0432 \u0438\u0441\u0445\u043E\u0434\u043D\u0438\u043A\u0435", () => {
+      const source = "---\ntags: [\u0442\u0435\u0441\u0442]\n---\n\u041F\u0440\u0438\u043D\u0446 \u0438 \u043D\u0438\u0449\u0438\u0439";
+      const words = parseWords(source, timing);
+      const first = words[0];
+      if (!first || first.charOffset === void 0 || first.charOffset < 20) return `\u0441\u043C\u0435\u0449\u0435\u043D\u0438\u0435 ${first == null ? void 0 : first.charOffset}`;
+      if (source.slice(first.charOffset, first.charOffset + first.raw.length) !== first.raw) return "\u0441\u043C\u0435\u0449\u0435\u043D\u0438\u0435 \u043D\u0435 \u0443\u043A\u0430\u0437\u044B\u0432\u0430\u0435\u0442 \u043D\u0430 \u0441\u043B\u043E\u0432\u043E";
+      return true;
+    });
+    check("\u0442\u0430\u0439\u043C\u0438\u043D\u0433\u0438", () => {
+      if (calculateWordDelayMs(300, 1) !== 200) return `300 WPM \u2192 ${calculateWordDelayMs(300, 1)} \u043C\u0441 \u0432\u043C\u0435\u0441\u0442\u043E 200`;
+      if (calculateWordDelayMs(300, 2) !== 400) return "\u043C\u043D\u043E\u0436\u0438\u0442\u0435\u043B\u044C \u043F\u0430\u0443\u0437\u044B \u043D\u0435 \u043F\u0440\u0438\u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F";
+      if (calculateWordDelayMs(0, 1) !== calculateWordDelayMs(60, 1)) return "\u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043D\u0435 \u043E\u0433\u0440\u0430\u043D\u0438\u0447\u0435\u043D\u0430 \u0441\u043D\u0438\u0437\u0443";
+      return true;
+    });
+    check("\u043D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044F \u043F\u043E \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F\u043C", () => {
+      var _a, _b;
+      const words = parseWords("\u041F\u0435\u0440\u0432\u043E\u0435. \u0412\u0442\u043E\u0440\u043E\u0435 \u0442\u0440\u0435\u0442\u044C\u0435.", timing);
+      const next = findNextSentenceStart(words, 0);
+      if (((_a = words[next]) == null ? void 0 : _a.raw) !== "\u0412\u0442\u043E\u0440\u043E\u0435") return `\u043F\u0435\u0440\u0435\u0445\u043E\u0434 \u0434\u0430\u043B \xAB${(_b = words[next]) == null ? void 0 : _b.raw}\xBB`;
+      if (findNextSentenceStart([], 0) !== 0) return "\u043F\u0443\u0441\u0442\u043E\u0439 \u0442\u0435\u043A\u0441\u0442 \u043B\u043E\u043C\u0430\u0435\u0442 \u043D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044E";
+      return true;
+    });
+    check("\u0433\u0440\u0430\u043D\u0438\u0446\u044B \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441\u0430", () => {
+      if (calculateProgressPercent(0, 0) !== 0) return "\u043F\u0443\u0441\u0442\u043E\u0439 \u0442\u0435\u043A\u0441\u0442 \u0434\u0430\u0451\u0442 \u043D\u0435 0%";
+      if (calculateProgressPercent(10, 10) !== 100) return "\u043A\u043E\u043D\u0435\u0446 \u0442\u0435\u043A\u0441\u0442\u0430 \u0434\u0430\u0451\u0442 \u043D\u0435 100%";
+      if (calculateProgressPercent(-5, 10) !== 0) return "\u043E\u0442\u0440\u0438\u0446\u0430\u0442\u0435\u043B\u044C\u043D\u0430\u044F \u043F\u043E\u0437\u0438\u0446\u0438\u044F \u0434\u0430\u0451\u0442 \u043D\u0435 0%";
+      return true;
+    });
+    return results;
+  }
+  /** Self-check plus a real open/render/seek/close of the reader window. */
+  async showSelfCheck() {
+    var _a, _b;
+    const results = this.runSelfCheck();
+    const modal = new SpeedReaderModal(this.app, this, "\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u043E\u043A\u043D\u0430 \u0447\u0442\u0435\u043D\u0438\u044F. \u0412\u0442\u043E\u0440\u043E\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0437\u0434\u0435\u0441\u044C.", "Self-check", "");
+    try {
+      modal.open();
+      const contentEl = modal.contentEl;
+      if (!contentEl) {
+        results.push({ name: "\u043E\u043A\u043D\u043E \u0447\u0442\u0435\u043D\u0438\u044F", status: "skip", detail: "\u043D\u0435\u0442 \u0434\u043E\u0441\u0442\u0443\u043F\u0430 \u043A DOM" });
+      } else {
+        const wordBox = contentEl.querySelector(".sr-word-box");
+        const label = (_b = (_a = contentEl.querySelector(".sr-progress-label")) == null ? void 0 : _a.textContent) != null ? _b : "";
+        if (!wordBox) results.push({ name: "\u043E\u043A\u043D\u043E \u0447\u0442\u0435\u043D\u0438\u044F", status: "fail", detail: "\u043D\u0435 \u043E\u0442\u0440\u0438\u0441\u043E\u0432\u0430\u043D\u043E \u0441\u043B\u043E\u0432\u043E" });
+        else if (!label.startsWith("1 / ")) results.push({ name: "\u043E\u043A\u043D\u043E \u0447\u0442\u0435\u043D\u0438\u044F", status: "fail", detail: `\u043F\u043E\u0434\u043F\u0438\u0441\u044C \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441\u0430 \xAB${label}\xBB` });
+        else results.push({ name: "\u043E\u043A\u043D\u043E \u0447\u0442\u0435\u043D\u0438\u044F", status: "ok" });
+      }
+    } catch (error) {
+      results.push({ name: "\u043E\u043A\u043D\u043E \u0447\u0442\u0435\u043D\u0438\u044F", status: "fail", detail: error instanceof Error ? error.message : String(error) });
+    } finally {
+      modal.close();
+    }
+    const failed = results.filter((result) => result.status === "fail");
+    const skipped = results.filter((result) => result.status === "skip");
+    const summary = failed.length === 0 ? `\u2705 \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F: ${results.length - skipped.length} \u0438\u0437 ${results.length - skipped.length} OK` : `\u274C \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F: ${failed.length} \u043E\u0448\u0438\u0431\u043E\u043A
+` + failed.map((result) => {
+      var _a2;
+      return `\u2022 ${result.name}: ${(_a2 = result.detail) != null ? _a2 : "\u0441\u0431\u043E\u0439"}`;
+    }).join("\n");
+    if (skipped.length > 0) {
+      new import_obsidian3.Notice(`\u26A0\uFE0F \u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F: ${skipped.length} \u0448\u0430\u0433\u043E\u0432 \u043F\u0440\u043E\u043F\u0443\u0449\u0435\u043D\u043E`, 6e3);
+    }
+    new import_obsidian3.Notice(summary, failed.length === 0 ? 6e3 : 15e3);
   }
   speedReadActiveView() {
     var _a, _b, _c, _d;

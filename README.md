@@ -102,6 +102,7 @@ The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. Relea
   - `Speed read entire active note`;
   - `Show speed reading statistics`.
 - Правый клик по выделенному тексту → **Speed read selection**.
+- Проверка прямо в Obsidian: `Ctrl+P` → **Speed Reader (RSVP): Run self-check**. Откроется и закроется окно чтения, затем появится уведомление вида «✅ Проверка скорочтения: 6 из 6 OK» или список найденных ошибок.
 
 ## 🧪 Проверка
 

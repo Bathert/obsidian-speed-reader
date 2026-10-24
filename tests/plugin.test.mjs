@@ -6,7 +6,7 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 test('onload registers commands, ribbon, settings and menu once without writes', async () => {
   const h = harness(); await h.plugin.onload();
-  assert.deepEqual(h.calls.commands.map(c => c.id), ['speed-read-current', 'speed-read-selection', 'speed-read-whole-note', 'speed-reader-stats']);
+  assert.deepEqual(h.calls.commands.map(c => c.id), ['speed-read-current', 'speed-read-selection', 'speed-read-whole-note', 'speed-reader-stats', 'speed-reader-self-check']);
   assert.equal(h.calls.ribbons.length, 1);
   assert.equal(h.calls.tabs.length, 1);
   assert.equal(h.calls.events.length, 1);
@@ -160,4 +160,38 @@ test('load merges legacy partial statistics without losing counters', async () =
   assert.equal(h.plugin.settings.defaultWpm, 500);
   assert.equal(h.plugin.settings.readerFont, 'theme');
   assert.equal(h.plugin.settings.noteProgress['note.md'].index, 2);
+});
+
+test('self-check command exists and reports pure checks as OK', async () => {
+  const h = harness();
+  await h.plugin.onload();
+  assert.ok(h.command('speed-reader-self-check'), 'self-check command must be registered');
+  const results = h.plugin.runSelfCheck();
+  assert.ok(results.length >= 5, `expected at least 5 checks, got ${results.length}`);
+  assert.equal(results.filter(result => result.status !== 'ok').length, 0);
+});
+test('self-check notice reports failures with their names', async () => {
+  const h = harness();
+  await h.plugin.onload();
+  const failing = {
+    name: 'тайминги',
+    status: 'fail',
+    detail: 'демонстрационная ошибка',
+  };
+  const original = h.plugin.runSelfCheck.bind(h.plugin);
+  h.plugin.runSelfCheck = () => [failing, ...original()];
+  await h.plugin.showSelfCheck();
+  const notice = h.calls.notices.at(-1);
+  assert.match(notice.message, /1 ошибок/);
+  assert.match(notice.message, /тайминги: демонстрационная ошибка/);
+  assert.equal(h.calls.closed, 1, 'self-check must close its probe window');
+});
+
+test('self-check success notice counts only verified steps', async () => {
+  const h = harness();
+  await h.plugin.onload();
+  await h.plugin.showSelfCheck();
+  const messages = h.calls.notices.map(notice => notice.message);
+  assert.ok(messages.some(message => /OK$/.test(message)), `expected an OK notice, got ${JSON.stringify(messages)}`);
+  assert.ok(messages.some(message => /пропущено/.test(message)), 'DOM-less harness must report the skipped window check');
 });

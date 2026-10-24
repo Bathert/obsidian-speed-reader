@@ -39,6 +39,7 @@ export function harness(data = null) {
       Object.assign(this, { app, plugin, text, title, noteKey, onSyncCursor });
     }
     open() { calls.modals.push(this); }
+    close() { calls.closed = (calls.closed ?? 0) + 1; }
   }
   class Notice { constructor(message, duration) { calls.notices.push({ message, duration }); } }
   const obsidian = { Plugin, PluginSettingTab, MarkdownView, SpeedReaderModal, Notice };
