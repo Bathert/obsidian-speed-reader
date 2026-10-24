@@ -3,8 +3,11 @@ import { ParsedWord, parseWords } from "./textParser";
 import type { SpeedReaderSettings } from "./settings";
 import type SpeedReaderPlugin from "./main";
 import {
+  buildMotivationLine,
   calculateProgressPercent,
   calculateRampUpWpm,
+  calculateSessionSummary,
+  formatDuration,
   calculateWordDelayMs,
   findNextSentenceStart,
   findPreviousSentenceStart,
@@ -32,6 +35,9 @@ export class SpeedReaderModal extends Modal {
   private sessionStartTime: number = Date.now();
   private isRampingUp: boolean = false;
   private lastPersistedIndex: number = 0;
+  // Активное время чтения без пауз — база для честной средней скорости.
+  private activeSince: number | null = null;
+  private activeMs: number = 0;
 
   // DOM Elements
   private resumeBannerEl!: HTMLElement;
@@ -41,6 +47,7 @@ export class SpeedReaderModal extends Modal {
   private suffixEl!: HTMLElement;
   private chunkEl!: HTMLElement;
   private contextEl!: HTMLElement;
+  private pauseCardEl!: HTMLElement;
   private playPauseBtn!: HTMLElement;
   private progressBar!: HTMLInputElement;
   private progressLabel!: HTMLElement;
@@ -164,6 +171,10 @@ export class SpeedReaderModal extends Modal {
       const bottomGuide = frame.createDiv({ cls: "sr-guide sr-guide-bottom" });
       bottomGuide.createDiv({ cls: "sr-notch sr-notch-up" });
     }
+
+    // Pause summary card: заполняется и показывается только на паузе
+    this.pauseCardEl = contentEl.createDiv({ cls: "sr-pause-card" });
+    this.pauseCardEl.style.display = "none";
 
     // Context preview row
     this.contextEl = contentEl.createDiv({ cls: "sr-context-preview" });
@@ -386,6 +397,8 @@ export class SpeedReaderModal extends Modal {
 
   private play() {
     this.isPlaying = true;
+    this.activeSince = Date.now();
+    if (this.pauseCardEl) this.pauseCardEl.style.display = "none";
     setIcon(this.playPauseBtn, "pause");
     this.playPauseBtn.setAttribute("title", "Пауза (Пробел)");
     if (this.settings.enableTts) {
@@ -400,6 +413,7 @@ export class SpeedReaderModal extends Modal {
    */
   private pause(triggeredByUser: boolean = true) {
     this.isPlaying = false;
+    this.accumulateActiveTime();
     this.stopTts();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -420,6 +434,10 @@ export class SpeedReaderModal extends Modal {
     }
 
     this.updateWpmDisplay();
+
+    if (triggeredByUser && this.settings.showPauseStats !== false) {
+      this.renderPauseCard();
+    }
   }
 
   private restart() {
@@ -527,6 +545,65 @@ export class SpeedReaderModal extends Modal {
     if (Math.abs(this.currentIndex - this.lastPersistedIndex) < PROGRESS_SAVE_EVERY_WORDS) return;
     this.persistProgress();
     void this.plugin.saveSettings();
+  }
+
+  private accumulateActiveTime() {
+    if (this.activeSince === null) return;
+    this.activeMs += Date.now() - this.activeSince;
+    this.activeSince = null;
+  }
+
+  /**
+   * Итоги паузы: сколько прочитано, с какой реальной скоростью, сколько времени
+   * сэкономлено против обычного чтения и короткая мотивация.
+   */
+  private renderPauseCard() {
+    if (!this.pauseCardEl) return;
+
+    const activeSeconds = (this.activeMs + (this.activeSince ? Date.now() - this.activeSince : 0)) / 1000;
+    const remainingWords = Math.max(0, this.words.length - (this.currentIndex + 1));
+    const summary = calculateSessionSummary(
+      this.sessionWordsRead,
+      activeSeconds,
+      this.currentWpm,
+      remainingWords
+    );
+
+    this.pauseCardEl.empty();
+    this.pauseCardEl.addClass("sr-pause-card");
+
+    const head = this.pauseCardEl.createDiv({ cls: "sr-pause-card-head" });
+    head.createSpan({ text: "⏸ Пауза", cls: "sr-pause-card-title" });
+    head.createSpan({
+      text: ` · ${summary.wordsRead.toLocaleString()} слов за ${formatDuration(summary.readSeconds)}`,
+      cls: "sr-pause-card-sub",
+    });
+
+    if (summary.wordsRead > 0) {
+      const wide = this.pauseCardEl.createDiv({ cls: "sr-pause-card-metrics" });
+      const metric = (label: string, value: string) => {
+        const cell = wide.createDiv({ cls: "sr-pause-metric" });
+        cell.createDiv({ text: value, cls: "sr-pause-metric-value" });
+        cell.createDiv({ text: label, cls: "sr-pause-metric-label" });
+      };
+      metric("средняя скорость", `${summary.avgWpm} WPM`);
+      metric("быстрее обычного", `×${summary.speedup}`);
+      metric("сэкономлено", formatDuration(summary.savedSeconds));
+      metric("до конца", formatDuration(summary.remainingMinutes * 60));
+    }
+
+    this.pauseCardEl.createDiv({
+      text: buildMotivationLine(summary.avgWpm, this.currentWpm),
+      cls: "sr-pause-card-motivation",
+    });
+
+    const pct = calculateProgressPercent(this.currentIndex, this.words.length);
+    this.pauseCardEl.createDiv({
+      text: `Прогресс ${pct}% · ${this.currentIndex + 1} / ${this.words.length} слов`,
+      cls: "sr-pause-card-progress",
+    });
+
+    this.pauseCardEl.style.display = "block";
   }
 
   private updateWordDisplay() {

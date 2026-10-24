@@ -35,6 +35,8 @@ export interface SpeedReaderSettings {
   enableRampUp: boolean;
   rampUpWords: number;
   rewindOnPause: boolean;
+  /** Показывать итоги и мотивацию при постановке на паузу. */
+  showPauseStats: boolean;
   rewindOnPauseWords: number;
   pauseOnParagraphs: boolean;
   paragraphPauseMultiplier: number;
@@ -77,6 +79,7 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   enableRampUp: true,
   rampUpWords: 15,
   rewindOnPause: true,
+  showPauseStats: true,
   rewindOnPauseWords: 3,
   pauseOnParagraphs: true,
   paragraphPauseMultiplier: 2.5,
@@ -298,6 +301,18 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.rampUpWords = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Итоги и мотивация на паузе")
+      .setDesc("При постановке на паузу показывать, сколько прочитано, реальную скорость, экономию времени и короткую мотивацию")
+      .addToggle((toggle) =>
+        toggle
+          .setValue(this.plugin.settings.showPauseStats !== false)
+          .onChange(async (value) => {
+            this.plugin.settings.showPauseStats = value;
             await this.plugin.saveSettings();
           })
       );

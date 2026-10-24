@@ -100,3 +100,70 @@ export function calculateTimeSavedMinutes(totalWords: number, totalSecondsSpent:
   const actualMinutes = totalSecondsSpent / 60;
   return Math.max(0, Math.round((standardMinutes - actualMinutes) * 10) / 10);
 }
+
+export interface SessionSummary {
+  /** Сколько слов прочитано за текущую сессию. */
+  wordsRead: number;
+  /** Время в активном чтении, секунды (паузы не считаются). */
+  readSeconds: number;
+  /** Средняя скорость по факту, WPM. */
+  avgWpm: number;
+  /** Сколько минут заняло бы то же количество слов при обычных 200 WPM. */
+  baselineMinutes: number;
+  /** Сэкономленное время против 200 WPM, секунды. */
+  savedSeconds: number;
+  /** Во сколько раз быстрее обычного чтения. */
+  speedup: number;
+  /** Сколько минут осталось при текущей целевой скорости. */
+  remainingMinutes: number;
+}
+
+export function calculateSessionSummary(
+  wordsRead: number,
+  activeSeconds: number,
+  currentWpm: number,
+  remainingWords: number
+): SessionSummary {
+  const safeWords = Math.max(0, wordsRead);
+  const minutes = Math.max(0, activeSeconds) / 60;
+  const avgWpm = minutes > 0 ? Math.round(safeWords / minutes) : 0;
+  const baselineMinutes = safeWords / 200;
+  const savedMinutes = Math.max(0, baselineMinutes - minutes);
+  const speedup = minutes > 0 ? Math.round((avgWpm / 200) * 10) / 10 : 0;
+  const remainingMinutes = Math.max(0, remainingWords) / Math.max(60, currentWpm);
+
+  return {
+    wordsRead: safeWords,
+    readSeconds: Math.round(Math.max(0, activeSeconds)),
+    avgWpm,
+    baselineMinutes: Math.round(baselineMinutes * 10) / 10,
+    savedSeconds: Math.round(savedMinutes * 60),
+    speedup,
+    remainingMinutes: Math.round(remainingMinutes * 10) / 10,
+  };
+}
+
+/**
+ * Короткая мотивирующая строка под итогами паузы.
+ * Сравнивает фактическую скорость с обычным чтением (200 WPM).
+ */
+export function buildMotivationLine(avgWpm: number, targetWpm: number): string {
+  if (avgWpm <= 0) return "Поехали: пробел — и понеслась.";
+  if (avgWpm < 200) return "Пока медленнее обычного чтения. Попробуй +50 WPM, мозг быстро привыкает.";
+  if (avgWpm < 300) return "Уже быстрее обычного чтения. Держи ритм.";
+  if (avgWpm < 450) return "Хороший темп: обычный читатель столько не вытянет.";
+  if (avgWpm < 600) return "Сильный ход. Только не в ущерб пониманию: если плывёт смысл, шагни на -50.";
+  if (avgWpm > targetWpm + 50) return "Летишь выше цели. Если картинка в голове рассыпается — притормози на 50.";
+  return "На такой скорости обычно перечитывают. Проверь, что смысл держится.";
+}
+
+/**
+ * Человеческая длительность: до минуты — секунды, дальше минуты с одним знаком.
+ */
+export function formatDuration(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  if (safe < 60) return `${safe} с`;
+  const minutes = safe / 60;
+  const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
+  return `${text} мин`;
+}

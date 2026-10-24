@@ -2,6 +2,7 @@ import test, { describe, it } from "node:test";
 import assert from "node:assert";
 import {
   calculateWordDelayMs,
+  formatDuration,
   clampIndex,
   stepIndex,
   calculateProgressPercent,
@@ -10,6 +11,8 @@ import {
   findPreviousSentenceStart,
   findNextSentenceStart,
   calculateTimeSavedMinutes,
+  calculateSessionSummary,
+  buildMotivationLine,
 } from "../src/speedEngine.ts";
 
 describe("speedEngine - calculateWordDelayMs", () => {
@@ -131,5 +134,53 @@ describe("speedEngine - progress and time remaining", () => {
     assert.strictEqual(formatTimeRemaining(450, 300), "~1m 30s left");
     assert.strictEqual(formatTimeRemaining(50, 300), "~10s left");
     assert.strictEqual(formatTimeRemaining(0, 300), "0s left");
+  });
+});
+
+describe("speedEngine - session summary", () => {
+  it("считает среднюю скорость, экономию и остаток", () => {
+    const s = calculateSessionSummary(1200, 180, 600, 12000);
+    assert.strictEqual(s.wordsRead, 1200);
+    assert.strictEqual(s.readSeconds, 180);
+    assert.strictEqual(s.avgWpm, 400);
+    assert.strictEqual(s.baselineMinutes, 6);
+    assert.strictEqual(s.savedSeconds, 180);
+    assert.strictEqual(s.speedup, 2);
+    assert.strictEqual(s.remainingMinutes, 20);
+  });
+
+  it("не делит на ноль, если активного времени ещё нет", () => {
+    const s = calculateSessionSummary(0, 0, 650, 5000);
+    assert.strictEqual(s.avgWpm, 0);
+    assert.strictEqual(s.savedSeconds, 0);
+    assert.strictEqual(s.speedup, 0);
+    assert.strictEqual(s.remainingMinutes, 7.7);
+  });
+
+  it("не показывает отрицательную экономию, если читал медленнее обычного", () => {
+    const s = calculateSessionSummary(100, 60, 350, 1000);
+    assert.strictEqual(s.avgWpm, 100);
+    assert.strictEqual(s.savedSeconds, 0);
+    assert.ok(s.speedup < 1);
+  });
+});
+
+describe("speedEngine - motivation line", () => {
+  it("подбадривает на низкой скорости и предупреждает на слишком высокой", () => {
+    assert.match(buildMotivationLine(120, 650), /медленнее обычного/);
+    assert.match(buildMotivationLine(350, 650), /Хороший темп/);
+    assert.match(buildMotivationLine(900, 650), /Летишь выше цели/);
+    assert.match(buildMotivationLine(0, 650), /Пробел|пробел/);
+  });
+});
+
+describe("speedEngine - formatDuration", () => {
+  it("показывает секунды до минуты и минуты дальше", () => {
+    assert.strictEqual(formatDuration(0), "0 с");
+    assert.strictEqual(formatDuration(45), "45 с");
+    assert.strictEqual(formatDuration(59), "59 с");
+    assert.strictEqual(formatDuration(60), "1,0 мин");
+    assert.strictEqual(formatDuration(144), "2,4 мин");
+    assert.strictEqual(formatDuration(3600), "60 мин");
   });
 });
