@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin } from "obsidian";
+import { Editor, MarkdownFileInfo, MarkdownView, Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SpeedReaderSettings, SpeedReaderSettingTab } from "./settings";
 import { SpeedReaderModal } from "./readerModal";
 import { calculateTimeSavedMinutes } from "./speedEngine";
@@ -34,7 +34,7 @@ export default class SpeedReaderPlugin extends Plugin {
     this.addCommand({
       id: "speed-read-selection",
       name: "Speed read selected text",
-      editorCallback: (editor: Editor, view: MarkdownView) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const selection = editor.getSelection();
         if (!selection || !selection.trim()) {
           new Notice("Speed Reader: No text selected.");
@@ -54,7 +54,7 @@ export default class SpeedReaderPlugin extends Plugin {
     this.addCommand({
       id: "speed-read-whole-note",
       name: "Speed read entire active note",
-      editorCallback: (editor: Editor, view: MarkdownView) => {
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const content = editor.getValue();
         if (!content || !content.trim()) {
           new Notice("Speed Reader: Active note is empty.");
@@ -67,7 +67,7 @@ export default class SpeedReaderPlugin extends Plugin {
           content,
           view.file?.basename || "Active Note",
           noteKey,
-          (wordIndex, rawWord) => this.syncEditorCursor(editor, rawWord)
+          (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
         ).open();
       },
     });
@@ -147,12 +147,24 @@ export default class SpeedReaderPlugin extends Plugin {
         content,
         activeView.file?.basename || "Active Note",
         noteKey,
-        (wordIndex, rawWord) => this.syncEditorCursor(editor, rawWord)
+        (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
       ).open();
     }
   }
 
-  private syncEditorCursor(editor: Editor, rawWord: string) {
+  private syncEditorCursor(editor: Editor, rawWord: string, charOffset?: number) {
+    // Preferred path: the parser knows where this occurrence of the word lives
+    // in the note, so the cursor lands on the word being read -- not on the
+    // first identical word in the document.
+    if (typeof charOffset === "number" && charOffset >= 0) {
+      const pos = editor.offsetToPos(charOffset);
+      editor.setCursor(pos);
+      editor.scrollIntoView({ from: pos, to: pos }, true);
+      return;
+    }
+
+    // Fallback for words the parser could not map back to the source
+    // (e.g. text that only exists after markdown was stripped).
     if (!rawWord) return;
     const doc = editor.getValue();
     const cleanWord = rawWord.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");

@@ -224,3 +224,75 @@ describe("textParser - Feature 2: groupIntoChunks", () => {
     assert.strictEqual(chunks[2].raw, "the lazy dog");
   });
 });
+
+describe("textParser - charOffset (cursor sync)", () => {
+  const options = {
+    pauseOnPunctuation: true,
+    sentencePauseMultiplier: 2.0,
+    commaPauseMultiplier: 1.4,
+    pauseOnParagraphs: true,
+    paragraphPauseMultiplier: 2.5,
+    pauseOnNumbersAndAcronyms: true,
+  };
+
+  it("gives every repeated word its own occurrence, not the first one", () => {
+    const source = "и кот и пёс и лиса";
+    const words = parseWords(source, options);
+    const offsets = words.map((w) => w.charOffset);
+
+    assert.strictEqual(words.length, 6);
+    assert.ok(offsets.every((o) => typeof o === "number"));
+    for (let i = 1; i < offsets.length; i++) {
+      assert.ok(
+        (offsets[i] as number) > (offsets[i - 1] as number),
+        `offset of "${words[i].raw}" must be greater than the previous word`
+      );
+    }
+    for (let i = 0; i < words.length; i++) {
+      const offset = offsets[i] as number;
+      assert.strictEqual(
+        source.slice(offset, offset + words[i].raw.length),
+        words[i].raw,
+        `source at offset ${offset} must start with "${words[i].raw}"`
+      );
+    }
+  });
+
+  it("points at the word itself when it is wrapped in markdown markup", () => {
+    const source = "Начало **жирного** текста";
+    const words = parseWords(source, options);
+    const bold = words.find((w) => w.raw === "жирного");
+
+    assert.ok(bold, "bold word must be parsed");
+    assert.strictEqual(typeof bold!.charOffset, "number");
+    assert.strictEqual(
+      source.slice(bold!.charOffset!, bold!.charOffset! + "жирного".length),
+      "жирного"
+    );
+  });
+
+  it("points at the alias text of a wiki-link, not at the page name", () => {
+    const source = "см. [[Длинное имя страницы|Алиас]] дальше";
+    const words = parseWords(source, options);
+    const alias = words.find((w) => w.raw === "Алиас");
+
+    assert.ok(alias, "alias must be parsed as a word");
+    assert.strictEqual(
+      source.slice(alias!.charOffset!, alias!.charOffset! + "Алиас".length),
+      "Алиас"
+    );
+  });
+
+  it("keeps offsets after frontmatter pointing into the body", () => {
+    const source = "---\ntitle: Заметка\n---\nПервое слово и второе";
+    const words = parseWords(source, options);
+    const frontmatterEnd = source.indexOf("Первое");
+
+    assert.strictEqual(words.length, 4);
+    assert.ok(
+      (words[0].charOffset as number) >= frontmatterEnd,
+      "first body word must be located after the frontmatter"
+    );
+    assert.strictEqual(source.slice(words[0].charOffset!), source.slice(frontmatterEnd));
+  });
+});

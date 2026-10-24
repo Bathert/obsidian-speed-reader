@@ -111,6 +111,12 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result: ParsedWord[] = [];
 
+  // Sequential search cursor into the ORIGINAL text. Markdown is stripped in
+  // `cleaned`, so we re-locate every core word in the source in reading order.
+  // A moving cursor (instead of indexOf from 0) keeps repeated words like "и"
+  // pointing at their own occurrence rather than the first one in the note.
+  let searchFrom = 0;
+
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const paragraph = paragraphs[pIdx];
     const rawTokens = paragraph.split(/\s+/).filter((w) => w.length > 0);
@@ -170,6 +176,17 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       // Final delay is length multiplier combined with punctuation multiplier
       const delayMultiplier = Math.round(lengthMultiplier * punctMultiplier * 100) / 100;
 
+      // Locate the core word in the original note, moving forward only, so the
+      // offset always belongs to the occurrence currently being read.
+      let charOffset: number | undefined;
+      if (coreWord.length > 0) {
+        const found = text.indexOf(coreWord, searchFrom);
+        if (found !== -1) {
+          charOffset = found;
+          searchFrom = found + coreWord.length;
+        }
+      }
+
       result.push({
         raw: token,
         prefix,
@@ -177,6 +194,7 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
         suffix,
         delayMultiplier,
         isParagraphEnd,
+        charOffset,
       });
     }
   }
