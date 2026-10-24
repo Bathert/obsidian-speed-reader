@@ -27,6 +27,8 @@ jobs:
       - name: Verify release metadata
         run: node scripts/verify-release.mjs
       - name: Attest release assets
+        # Artifact attestations are unavailable for user-owned private repositories.
+        if: ${{ github.event.repository.visibility == 'public' }}
         uses: actions/attest@v4
         with:
           subject-path: |
@@ -38,4 +40,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: gh release create "$RELEASE_TAG" main.js styles.css manifest.json --verify-tag --title "$RELEASE_TAG" --generate-notes
+        run: |
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            echo "Release $RELEASE_TAG already exists; uploading assets."
+            gh release upload "$RELEASE_TAG" main.js styles.css manifest.json --clobber
+          else
+            gh release create "$RELEASE_TAG" main.js styles.css manifest.json --verify-tag --title "$RELEASE_TAG" --generate-notes
+          fi
