@@ -627,6 +627,9 @@ export class SpeedReaderModal extends Modal {
     }
 
     this.updateWpmDisplay();
+    // Pausing always widens the context, even when rewind is off or no words
+    // were read yet.
+    this.updateContext();
 
     if (this.hasInteracted && this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
       this.persistProgress();
@@ -639,6 +642,7 @@ export class SpeedReaderModal extends Modal {
 
   private restart() {
     this.wordsSinceResume = 0;
+    this.wordsSinceAcceleration = 0;
     this.goToWord(0);
   }
 

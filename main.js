@@ -1387,6 +1387,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       }
     }
     this.updateWpmDisplay();
+    this.updateContext();
     if (this.hasInteracted && this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
       this.persistProgress();
       void this.plugin.saveSettings();
@@ -1397,6 +1398,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   restart() {
     this.wordsSinceResume = 0;
+    this.wordsSinceAcceleration = 0;
     this.goToWord(0);
   }
   step(delta) {

@@ -277,3 +277,30 @@ test('manual seeking clears the rewind debt so new words are counted', () => {
   h.tick();
   assert.equal(h.modal.sessionWordsRead, before + 1);
 });
+
+test('pause widens the context even when rewind is disabled', () => {
+  const words = Array.from({ length: 30 }, (_, i) => `w${i + 1}`);
+  const h = readerHarness(words.join(' '), { enableRampUp: false, rewindOnPause: false });
+  h.modal.goToWord(10);
+  h.modal.togglePlay();
+  h.tick(); h.tick();
+  h.modal.pause(true);
+  const box = h.modal.contextEl;
+  assert.equal(box.hasClass('sr-context-expanded'), true);
+  assert.equal(box.all('span').filter(span => span.hasClass('sr-context-word')).length, 14);
+});
+
+test('restart clears the trainer acceleration interval', () => {
+  const words = Array.from({ length: 40 }, (_, i) => `w${i + 1}`);
+  const h = readerHarness(words.join(' '), {
+    enableRampUp: false, autoAccelerate: true, autoAccelerateStep: 10, autoAccelerateIntervalWords: 3, maxWpmLimit: 600,
+  });
+  h.modal.togglePlay();
+  for (let i = 0; i < 3; i++) h.tick();
+  assert.equal(h.modal.currentWpm, 310);
+  h.modal.restart();
+  assert.equal(h.modal.wordsSinceAcceleration, 0);
+  h.tick();
+  assert.equal(h.modal.currentWpm, 310, 'no early step right after restart');
+  assert.equal(h.modal.wordsSinceAcceleration, 1);
+});
