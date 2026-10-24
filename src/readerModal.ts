@@ -104,6 +104,10 @@ export class SpeedReaderModal extends Modal {
       modalEl.addClass(`sr-font-${this.settings.readerFont}`);
     }
 
+    // The reader draws its own header, so the host's empty title bar is hidden
+    // through a class instead of a :has() selector or inline style.
+    this.modalEl.querySelector(".modal-header")?.addClass("sr-header-hidden");
+
     if (this.words.length === 0) {
       contentEl.createEl("h3", { text: "No readable words found in selection or note." });
       const closeBtn = contentEl.createEl("button", { text: "Close", cls: "mod-cta" });

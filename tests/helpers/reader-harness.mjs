@@ -23,6 +23,10 @@ class Element {
   getAttribute(key) { return this.attrs[key]; }
   get textContent() { return this.text + this.children.map(c => c.textContent).join(''); }
   find(cls) { if (this.classes.has(cls)) return this; for (const c of this.children) { const found = c.find(cls); if (found) return found; } }
+  querySelector(selector) {
+    if (!selector.startsWith(".")) return null;
+    return this.find(selector.slice(1)) ?? null;
+  }
   all(tag) { return [...(this.tagName === tag ? [this] : []), ...this.children.flatMap(c => c.all(tag))]; }
 }
 const compiled = buildSync({ entryPoints: [fileURLToPath(new URL('../../src/readerModal.ts', import.meta.url))], bundle: true, platform: 'node', format: 'cjs', external: ['obsidian'], write: false }).outputFiles[0].text;
@@ -32,7 +36,7 @@ export function readerHarness(text = 'Один два три. Четыре пя�
   const timers = new Map(), spoken = [], notices = [], saves = [], synced = [];
   const settings = { defaultWpm: 300, fontSize: 44, readerFont: 'theme', highlightOrp: true, orpWidth: 1, orpColor: '#e63946', showFixationGuide: true, pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4, stepWordCount: 10, themeMode: 'default', enableRampUp: true, rampUpWords: 15, rewindOnPause: true, showPauseStats: true, rewindOnPauseWords: 3, pauseOnParagraphs: true, paragraphPauseMultiplier: 2.5, pauseOnNumbersAndAcronyms: true, chunkSize: 1, bionicInChunks: true, rememberProgress: true, syncCursorOnClose: true, noteProgress: {}, redicleAlignment: 'spritz', spritzVariableTiming: true, enableTts: false, stats: { totalWordsRead: 0, totalSecondsRead: 0, maxWpm: 0, sessionsCount: 0 }, ...overrides };
   class Modal {
-    constructor(app) { this.app = app; this.contentEl = new Element(); this.modalEl = new Element(); this.scope = { register: (_a, _b, cb) => { this.key = cb; } }; }
+    constructor(app) { this.app = app; this.contentEl = new Element(); this.modalEl = new Element(); this.modalEl.children.push(new Element('div', { cls: 'modal-header' })); this.scope = { register: (_a, _b, cb) => { this.key = cb; } }; }
     close() { this.onClose(); this.closed = true; }
     open() { this.onOpen(); }
   }

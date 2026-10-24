@@ -213,8 +213,7 @@
 
 .sr-context-preview b {
   color: var(--text-normal);
-  text-decoration: underline;
-  text-underline-offset: 3px;
+  border-bottom: 1px solid var(--text-faint);
 }
 
 /* Progress bar & meta */
@@ -718,7 +717,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   box-shadow: 0 24px 80px #0006;
   font-variant-numeric: tabular-nums;
 }
-.sr-modal-container .modal-header:has(.modal-title:empty) { display: none; }
+.sr-modal-container .modal-header.sr-header-hidden { display: none; }
 .sr-modal-container .modal-content { margin: 0; overflow-x: hidden; }
 .sr-modal-container .sr-header {
   display: flex;
@@ -752,7 +751,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   min-height: 26px;
   color: var(--text-muted);
 }
-.sr-modal-container .sr-context-preview b { font-weight: 500; text-decoration-color: var(--text-faint); text-underline-offset: 5px; }
+.sr-modal-container .sr-context-preview b { font-weight: 500; border-bottom: 1px solid var(--text-faint); }
 .sr-modal-container .sr-pause-card {
   padding: 16px 0;
   margin: 0 0 14px;

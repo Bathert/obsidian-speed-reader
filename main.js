@@ -665,6 +665,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     });
   }
   onOpen() {
+    var _a;
     const { contentEl, modalEl } = this;
     contentEl.empty();
     modalEl.addClass("sr-modal-container");
@@ -674,6 +675,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (this.settings.readerFont && this.settings.readerFont !== "theme") {
       modalEl.addClass(`sr-font-${this.settings.readerFont}`);
     }
+    (_a = this.modalEl.querySelector(".modal-header")) == null ? void 0 : _a.addClass("sr-header-hidden");
     if (this.words.length === 0) {
       contentEl.createEl("h3", { text: "No readable words found in selection or note." });
       const closeBtn = contentEl.createEl("button", { text: "Close", cls: "mod-cta" });

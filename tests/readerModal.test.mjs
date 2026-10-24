@@ -166,3 +166,8 @@ test('visible pause summary follows seek and speed changes',()=>{
  const h=readerHarness();h.modal.pause(true);h.modal.goToWord(4);assert.match(h.modal.pauseCardEl.textContent,/5 \/ 6/);
  h.modal.adjustWpm(50);assert.equal(h.modal.currentWpm,350);
 });
+
+test('reader hides the host modal title bar through a scoped class', () => {
+  const h = readerHarness();
+  assert.equal(h.modal.modalEl.querySelector('.modal-header').classes.has('sr-header-hidden'), true);
+});

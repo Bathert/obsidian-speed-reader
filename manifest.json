@@ -1,7 +1,7 @@
 {
   "id": "rsvp-speed-reader",
   "name": "Speed Reader (RSVP)",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "minAppVersion": "1.13.0",
   "description": "Speed read notes using Spritz-style RSVP with Optimal Recognition Point (ORP), smart pacing, chunking, and text-to-speech.",
   "author": "Bathert",

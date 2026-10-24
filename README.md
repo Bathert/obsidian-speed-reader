@@ -2,116 +2,95 @@
 
 Read a note or selected text one word at a time using rapid serial visual presentation (RSVP), with an optimal recognition point (ORP) highlight, adjustable speed, smart pauses, chunking, saved positions, reading statistics, and optional text-to-speech. Requires Obsidian 1.13.0 or newer.
 
+Russian version: [README.ru.md](README.ru.md)
+
+## Features
+
+### Spritz-style presentation
+
+- **Redicle alignment (35/65)** keeps the focus letter at 35% from the left edge, so long word endings do not push the word out of view. A centered 50/50 mode is also available.
+- **ORP highlight** marks the optimal recognition point with a configurable color and a width of one to three letters.
+- **Variable timing by word length**: very short words (1-2 letters) are shown 20% faster, medium words (3-8) at normal speed, long words (9-12) 15% slower, and extra-long words (13+) 35% slower.
+- **Fixation guides** frame the word and can be turned off.
+
+### Pacing and rhythm
+
+- **Speed ramp-up** starts at 65% of the target speed and reaches it over the first 15 words.
+- **Rewind on pause** steps three words back, so the context is never lost.
+- **Pauses on punctuation, paragraph breaks, numbers, and acronyms** use configurable multipliers.
+
+### Chunking and bionic reading
+
+- Show one, two, or three words per frame.
+- Optionally bold the first part of each word inside a chunk (bionic reading).
+
+### Speech
+
+- The speaker button and the `M` key toggle text-to-speech through the platform Web Speech API, at a rate proportional to the chosen WPM.
+- Speech uses installed system voices, is approximate rather than word-synchronized, and may use online services depending on your system settings. Check those settings before reading sensitive notes.
+
+### Progress, cursor, and statistics
+
+- The reading position is remembered per note and saved while reading, on pause, and on close.
+- On close, the editor cursor moves to the word being read.
+- **Show speed reading statistics** reports words read, time spent, top speed, and estimated time saved relative to 200 WPM. The saving is an estimate, not a measure or a guarantee of comprehension.
+
+### Reading fonts
+
+- **Golos Text** has a large x-height, open apertures, and full Cyrillic and Latin coverage. It is the recommended choice for Russian text.
+- **Atkinson Hyperlegible** distinguishes similar letter shapes but has **no Cyrillic**, so Russian words fall back to another font; it suits Latin text only.
+- Both fonts are embedded in `styles.css` as data URIs, so nothing is loaded from the network. OFL license texts are in `fonts/`.
+- The font is selected in **Settings - Speed Reader (RSVP) - Reader font**; the default is the theme font.
+
+## Keyboard shortcuts
+
+| Key | Action |
+|---|---|
+| `Space` | Start or pause (with rewind) |
+| `M` or the Russian `Ь` | Toggle text-to-speech |
+| `Up` / `Down` | Increase or decrease speed by 25 WPM |
+| `Left` / `Right` | Jump by the configured number of words |
+| `[` / `]` | Move to the previous or next sentence |
+| `R` or the Russian `К` | Restart from the first word |
+| `Esc` | Close the reader (saves progress and cursor) |
+
 ## Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the same [GitHub release](https://github.com/Bathert/obsidian-speed-reader/releases).
-2. Create `<vault>/.obsidian/plugins/rsvp-speed-reader/` (or use your vault's custom configuration directory).
-3. Copy all three files into that folder, restart Obsidian, and enable **Speed Reader (RSVP)** in **Settings → Community plugins**.
+Download the three files from a single [GitHub release](https://github.com/Bathert/obsidian-speed-reader/releases), or build them with `npm ci` and `npm run check`.
+
+1. Create `<vault>/.obsidian/plugins/rsvp-speed-reader/` (or use your vault's custom configuration directory).
+2. Copy `main.js`, `manifest.json`, and `styles.css` into that folder.
+3. Restart Obsidian, then enable **Speed Reader (RSVP)** in **Settings - Community plugins**.
 4. If an older manual installation used the folder `obsidian-speed-reader`, disable it, back up `data.json`, and rename the folder to `rsvp-speed-reader`. Keep `data.json` to retain settings and progress. Do not enable two copies.
 
 ## Usage
 
-Open a Markdown note, optionally select a passage, and click the book icon in the ribbon. Alternatively, use the command palette: **Speed read current selection or active note**, **Speed read selected text**, or **Speed read entire active note**. Selected text also has a **Speed read selection** editor context-menu action.
+Open a Markdown note, optionally select a passage, and click the book icon in the ribbon. Alternatively use the command palette:
 
-Press Space to start or pause. Up/Down changes speed by 25 WPM; Left/Right skips the configured number of words; `[` / `]` navigates sentences; R (К) restarts; M (Ь) toggles speech; Escape closes the reader. Configure speed, font, focus, pacing, chunking, progress, and speech in **Settings → Speed Reader (RSVP)**. Settings appear in Obsidian's settings search.
+- **Speed read current selection or active note** - reads the selection if there is one, the whole note otherwise;
+- **Speed read selected text** - reads only the selection;
+- **Speed read entire active note** - reads the whole note;
+- **Show speed reading statistics** - shows your counters;
+- **Run self-check** - opens and closes a short probe window, checks parsing, offsets, timing, navigation, progress bounds, and the reader window itself, then reports how many steps passed.
 
-Reading progress is stored per note when enabled. Use **Show speed reading statistics** to view statistics. Estimated time savings are relative to 200 WPM, not a measure or guarantee of comprehension. Speech uses the platform Web Speech API and available voices; timing is approximate, not word-synchronized. System voices may use online services, so check your system speech settings before reading sensitive notes.
+Selected text also has a **Speed read selection** item in the editor context menu.
+
+## Settings
+
+- **Speed**: default WPM, step size, speed ramp-up, rewinds.
+- **Display**: theme, reader font, font size, ORP color, ORP width, fixation guides.
+- **Pacing**: punctuation, comma, paragraph, number, and acronym multipliers.
+- **Chunking**: words per frame and bionic bolding.
+- **Progress**: remember position, sync the cursor on close, show pause statistics.
+- **Speech**: enable or disable text-to-speech.
+
+The settings tab uses the declarative settings API, so its controls appear in Obsidian's settings search.
 
 ## Development and releases
 
-Use Node.js 24 or newer and npm. Run `npm ci` and `npm run check` to type-check, lint, test, and build. The resulting `main.js`, `manifest.json`, and `styles.css` are the installation files.
+Use Node.js 24 or newer and npm. `npm ci` installs dependencies; `npm run check` type-checks, lints, tests, and builds; `npm run test:coverage` prints coverage for the pure logic modules.
 
-The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. Release 1.0.1 requires Obsidian 1.13.0 for the searchable declarative settings API. To publish, commit the reviewed changes and push a tag matching `manifest.json` (for example `1.0.1`, without `v`). The release workflow checks metadata, builds from that tag, and uploads the exact repository manifest with the built assets. It creates GitHub provenance attestations when run successfully on GitHub; a local build does not create attestations or update an existing release.
-
-## Описание по-русски
-
-Продвинутый плагин скорочтения для Obsidian, созданный по патентам и психолингвистическим исследованиям **Spritz** и топовых читалкок (**SwiftRead**, **Readwise Reader**).
-
----
-
-## 🎯 Научные принципы Spritz в плагине
-
-### 1. Фирменная рамка «The Redicle» (Правило 35/65)
-- Визир рамки и фокусная буква расположены **не строго по центру**, а на **35% от левого края** (как в оригинальном Spritz).
-- Это компенсирует длину окончаний и суффиксов (длинные слова не съезжают за правый край, а поле зрения естественно охватывает правую часть слова).
-- Доступно переключение: `Spritz Redicle (35/65)` или `Центр (50/50)`.
-
-### 2. Нелинейные тайминги длины слов (Spritz Variable Timing Engine)
-- **Короткие слова (1–2 буквы)**: союзы и предлоги (*«в»*, *«и»*, *«на»*, *«to»*, *«at»*) ускоряются на **20% (0.8x)**, так как мозг распознает их моментально.
-- **Средние слова (3–8 букв)**: стандартное время (1.0x).
-- **Длинные слова (9–12 букв)**: задержка +15% (1.15x).
-- **Экстра-длинные слова (13+ букв)**: задержка +35% (1.35x).
-
-### 3. Бимодальное чтение / TTS (Озвучка)
-- Кнопка динамика `🔊` на панели и горячая клавиша `M`.
-- Текст синхронно воспроизводится голосом через нативный Web Speech API на скорости, пропорциональной выбранному WPM.
-- Озвучка зависит от системных голосов и не синхронизирована с каждым словом. Скорость чтения не гарантирует лучшее понимание текста.
-
-### 4. Умный темп (Smart Pacing & Rhythm)
-- 🏎️ **Speed Ramp-up (Плавный разгон)**: старт с 65% скорости и плавный выход на целевой WPM за первые 15 слов.
-- ⏪ **Rewind on Pause (Авто-откат)**: при паузе ридер отступает на 3 слова назад, чтобы не терялся контекст.
-- 🛑 **Паузы на абзацах и знаках**: удлиненные задержки на точках, вопросительных знаках и границах параграфов.
-- 🔢 **Задержки на числах и аббревиатурах**: акцент на цифрах (`2026`) и аббревиатурах (`API`, `HTML`).
-
-### 5. Память заметок и Аналитика
-- 💾 Помнит место остановки в каждой заметке.
-- 🎯 Синхронизирует курсор в Obsidian при выходе из окна скорочтения.
-- 📊 Дашборд статистики: подсчет прочитанных слов, времени и сэкономленных минут.
-
----
-
-### 6. Шрифты для чтения
-
-- `Golos Text` — крупный x-height, открытые апертуры, полная кириллица и латиница. Основной вариант для русских текстов: в один столбец, на 60–72 px.
-- `Atkinson Hyperlegible` — шрифт Института Брайля с различимыми формами букв. Важно: в нём **нет кириллицы**, для русских слов браузер подставит другой шрифт, поэтому он годится только для латиницы.
-- Шрифты встроены в плагин (data URI в `styles.css`), без обращения к сети. Лицензии OFL лежат в `fonts/`.
-- Выбор шрифта: **Настройки → Speed Reader (RSVP) → Шрифт ридера**. По умолчанию — шрифт темы Obsidian.
-
-## ⌨️ Горячие клавиши
-
-| Клавиша | Действие |
-|---|---|
-| `Space` | **Старт / Пауза** (с авто-откатом назад) |
-| `M` / `Ь` | **Вкл / Выкл озвучку (TTS)** |
-| `↑` / `↓` | **±25 WPM** (изменение скорости) |
-| `←` / `→` | **±10 слов** (быстрая перемотка) |
-| `[` / `]` | **Переход по предложениям** (в начало пред./след. предложения) |
-| `R` / `К` | **Перезапуск** с первого слова |
-| `Esc` | Закрыть ридер (сохраняет прогресс и курсор) |
-
----
-
-## 📦 Установка в Obsidian
-
-Скачайте файлы из одного релиза GitHub или соберите проект командами `npm ci` и `npm run check`. Нужен Obsidian 1.13.0 или новее.
-
-1. Откройте папку плагинов вашего хранилища: `<Vault>/.obsidian/plugins/`
-2. Создайте там папку `rsvp-speed-reader`.
-3. Скопируйте туда 3 скомпилированных файла:
-   - `manifest.json`
-   - `main.js`
-   - `styles.css`
-4. В Obsidian: **Настройки** → **Сторонние плагины** → **Обновить** → Включите **Speed Reader (RSVP)**.
-
-## 🚀 Запуск
-
-- Значок раскрытой книги **Speed read note** на левой панели Obsidian.
-- Или `Ctrl+P` → `Speed Reader (RSVP)`:
-  - `Speed read current selection or active note` — выделение, если оно есть, иначе вся заметка;
-  - `Speed read selected text`;
-  - `Speed read entire active note`;
-  - `Show speed reading statistics`.
-- Правый клик по выделенному тексту → **Speed read selection**.
-- Проверка прямо в Obsidian: `Ctrl+P` → **Speed Reader (RSVP): Run self-check**. Откроется и закроется окно чтения, затем появится уведомление вида «✅ Проверка скорочтения: 6 из 6 OK» или список найденных ошибок.
-
-## 🧪 Проверка
-
-```bash
-npm run check          # типы, линт, тесты и сборка
-npm run test:coverage  # покрытие чистой логики
-```
-
-Тесты покрывают расчёты темпа, разбор Markdown и смещения слов, настройки, команды плагина и поведение окна чтения (клавиши, кнопки, пауза, перемотка, сохранение места, озвучка, чанки, темы). Реальный звук TTS и отрисовка шрифтов проверяются только вручную в Obsidian.
+The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.0.3`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
 
 ## License
 
