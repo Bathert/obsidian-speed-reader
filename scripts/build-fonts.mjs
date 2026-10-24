@@ -43,7 +43,6 @@ for (const face of FACES) {
       console.error(`нет файла шрифта: ${file}`);
       process.exit(1);
     }
-    const subset = base.split("-").slice(-2).join("-").replace("latin-ext", "latin-ext");
     const subsetKey = base.endsWith("-cyrillic-ext") ? "cyrillic-ext"
       : base.endsWith("-cyrillic") ? "cyrillic"
       : base.endsWith("-latin-ext") ? "latin-ext"
