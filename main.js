@@ -475,6 +475,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.timer = null;
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
+    // Слова, прочитанные с момента последнего старта/возобновления:
+    // именно по ним считается разгон, чтобы после паузы он начинался заново.
+    this.wordsSinceResume = 0;
     this.sessionStartTime = Date.now();
     this.isRampingUp = false;
     this.lastPersistedIndex = 0;
@@ -746,6 +749,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   play() {
     this.isPlaying = true;
+    this.wordsSinceResume = 0;
+    this.isRampingUp = false;
     this.activeSince = Date.now();
     if (this.pauseCardEl) this.pauseCardEl.style.display = "none";
     (0, import_obsidian2.setIcon)(this.playPauseBtn, "pause");
@@ -784,6 +789,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     }
   }
   restart() {
+    this.wordsSinceResume = 0;
     this.goToWord(0);
   }
   step(delta) {
@@ -797,6 +803,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     } else {
       targetIdx = findNextSentenceStart(this.words, this.currentIndex);
     }
+    this.wordsSinceResume = 0;
     this.goToWord(targetIdx);
   }
   goToWord(index) {
@@ -813,7 +820,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   updateWpmDisplay() {
     if (!this.wpmDisplay) return;
     if (this.isPlaying && this.isRampingUp) {
-      const rampWpm = calculateRampUpWpm(this.currentWpm, this.sessionWordsRead, this.settings.rampUpWords);
+      const rampWpm = calculateRampUpWpm(this.currentWpm, this.wordsSinceResume, this.settings.rampUpWords);
       this.wpmDisplay.setText(`\u26A1 ${rampWpm} / ${this.currentWpm} WPM`);
     } else {
       this.wpmDisplay.setText(`${this.currentWpm} WPM`);
@@ -828,9 +835,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       return;
     }
     let effectiveWpm = this.currentWpm;
-    if (this.settings.enableRampUp && this.sessionWordsRead < this.settings.rampUpWords) {
+    if (this.settings.enableRampUp && this.wordsSinceResume < this.settings.rampUpWords) {
       this.isRampingUp = true;
-      effectiveWpm = calculateRampUpWpm(this.currentWpm, this.sessionWordsRead, this.settings.rampUpWords);
+      effectiveWpm = calculateRampUpWpm(this.currentWpm, this.wordsSinceResume, this.settings.rampUpWords);
     } else {
       this.isRampingUp = false;
     }
@@ -841,6 +848,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       const prevWord = this.words[this.currentIndex];
       this.currentIndex = Math.min(this.words.length - 1, this.currentIndex + stepSize);
       this.sessionWordsRead += stepSize;
+      this.wordsSinceResume += stepSize;
       if (this.isPlaying && this.settings.enableTts && prevWord && /[.!?…]+["')\]}]*$/.test(prevWord.raw)) {
         this.speakFromCurrentSentence();
       }
