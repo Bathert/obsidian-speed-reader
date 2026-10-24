@@ -184,3 +184,24 @@ describe("speedEngine - formatDuration", () => {
     assert.strictEqual(formatDuration(3600), "60 мин");
   });
 });
+
+describe("speedEngine - темп и разгон на практике", () => {
+  it("длинные слова показываются дольше коротких при одной скорости", () => {
+    const base = calculateWordDelayMs(650, 1.0);
+    const short = calculateWordDelayMs(650, 0.8);
+    const long = calculateWordDelayMs(650, 1.35);
+
+    assert.strictEqual(base, 92);
+    assert.strictEqual(short, 74);
+    assert.strictEqual(long, 125);
+    assert.ok(long > base && base > short);
+    assert.ok(long / short > 1.6);
+  });
+
+  it("после возобновления разгон начинается заново, а не с полной скорости", () => {
+    // 0 слов с момента resume — это 65% от цели, и только к rampUpWords выходим на цель
+    assert.strictEqual(calculateRampUpWpm(650, 0, 30), 423);
+    assert.ok(calculateRampUpWpm(650, 0, 30) < 650);
+    assert.strictEqual(calculateRampUpWpm(650, 30, 30), 650);
+  });
+});
