@@ -141,7 +141,7 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   enableTts: false,
   ttsProvider: "system",
   unrealSpeechApiKey: "",
-  unrealSpeechVoiceId: "Scarlett",
+  unrealSpeechVoiceId: "Amelia",
   unrealSpeechCharsUsed: 0,
 
   // Top Feature 5
@@ -549,7 +549,7 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
           },
           {
             name: "Голос Unreal Speech",
-            desc: "Scarlett, Dan, Liv, Will, Amy — английские голоса; русский текст может звучать с акцентом",
+            desc: "Голоса Unreal Speech английские и мультиязычные (Amelia, Charlotte, Emily, Giulia, Lucía и др.); русского голоса в API нет, русский текст прозвучит с акцентом",
             aliases: ["unrealSpeechVoiceId", "voice"],
             control: {
               type: "dropdown",
