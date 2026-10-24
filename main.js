@@ -100,6 +100,7 @@ function calculateTimeSavedMinutes(totalWords, totalSecondsSpent) {
 var DEFAULT_SETTINGS = {
   defaultWpm: 350,
   fontSize: 44,
+  readerFont: "theme",
   highlightOrp: true,
   orpColor: "#e63946",
   showFixationGuide: true,
@@ -188,6 +189,14 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
     new import_obsidian.Setting(containerEl).setName("\u0420\u0430\u0437\u043C\u0435\u0440 \u0448\u0440\u0438\u0444\u0442\u0430").setDesc("\u0420\u0430\u0437\u043C\u0435\u0440 \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445").addSlider(
       (slider) => slider.setLimits(24, 72, 2).setValue(this.plugin.settings.fontSize).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.fontSize = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u0428\u0440\u0438\u0444\u0442 \u0440\u0438\u0434\u0435\u0440\u0430").setDesc(
+      "Golos Text \u2014 \u043A\u0440\u0443\u043F\u043D\u044B\u0439 x-height, \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043F\u0435\u0440\u0442\u0443\u0440\u044B, \u043F\u043E\u043B\u043D\u0430\u044F \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 (\u0445\u043E\u0440\u043E\u0448\u043E \u0434\u043B\u044F \u0447\u0442\u0435\u043D\u0438\u044F \u0432 \u043E\u0434\u0438\u043D \u0441\u0442\u043E\u043B\u0431\u0435\u0446). Atkinson Hyperlegible \u0440\u0430\u0437\u043B\u0438\u0447\u0438\u043C \u043F\u043E \u0444\u043E\u0440\u043C\u0435 \u0431\u0443\u043A\u0432, \u043D\u043E \u0432 \u043D\u0451\u043C \u043D\u0435\u0442 \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u044B: \u0434\u043B\u044F \u0440\u0443\u0441\u0441\u043A\u0438\u0445 \u0441\u043B\u043E\u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043F\u043E\u0434\u0441\u0442\u0430\u0432\u0438\u0442 \u0434\u0440\u0443\u0433\u043E\u0439 \u0448\u0440\u0438\u0444\u0442."
+    ).addDropdown(
+      (dropdown) => dropdown.addOption("theme", "\u041A\u0430\u043A \u0432 \u0442\u0435\u043C\u0435 Obsidian").addOption("golos", "Golos Text (\u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 + \u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)").addOption("atkinson", "Atkinson Hyperlegible (\u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)").setValue(this.plugin.settings.readerFont).onChange(async (value) => {
+        this.plugin.settings.readerFont = value === "golos" || value === "atkinson" ? value : "theme";
         await this.plugin.saveSettings();
       })
     );
@@ -450,6 +459,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     modalEl.addClass("sr-modal-container");
     if (this.settings.themeMode !== "default") {
       modalEl.addClass(`sr-theme-${this.settings.themeMode}`);
+    }
+    if (this.settings.readerFont && this.settings.readerFont !== "theme") {
+      modalEl.addClass(`sr-font-${this.settings.readerFont}`);
     }
     if (this.words.length === 0) {
       contentEl.createEl("h3", { text: "No readable words found in selection or note." });
