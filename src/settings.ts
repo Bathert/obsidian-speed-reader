@@ -23,6 +23,8 @@ export interface SpeedReaderSettings {
   /** Шрифт окна чтения: тема Obsidian, Golos Text (кириллица) или Atkinson Hyperlegible (латиница). */
   readerFont: ReaderFont;
   highlightOrp: boolean;
+  /** Сколько букв подсвечивать в зоне фокуса (1–3). */
+  orpWidth: number;
   orpColor: string;
   showFixationGuide: boolean;
   pauseOnPunctuation: boolean;
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   fontSize: 44,
   readerFont: "theme",
   highlightOrp: true,
+  orpWidth: 1,
   orpColor: "#e63946",
   showFixationGuide: true,
   pauseOnPunctuation: true,
@@ -221,6 +224,21 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
           .setValue(this.plugin.settings.highlightOrp)
           .onChange(async (value) => {
             this.plugin.settings.highlightOrp = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Сколько букв подсвечивать (зона фокуса)")
+      .setDesc("1 — классический Spritz: одна красная буква. 2–3 — шире зона распознавания, легче удерживать слово на высокой скорости")
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("1", "1 буква")
+          .addOption("2", "2 буквы")
+          .addOption("3", "3 буквы")
+          .setValue(String(this.plugin.settings.orpWidth ?? 1))
+          .onChange(async (value) => {
+            this.plugin.settings.orpWidth = Math.max(1, Math.min(3, parseInt(value, 10) || 1));
             await this.plugin.saveSettings();
           })
       );

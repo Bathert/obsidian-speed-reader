@@ -81,6 +81,7 @@ export class SpeedReaderModal extends Modal {
       paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
       spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: this.settings.orpWidth ?? 1,
     });
   }
 

@@ -5,6 +5,7 @@ import {
   getOrpIndex,
   parseWords,
   groupIntoChunks,
+  splitWordForOrp,
 } from "../src/textParser.ts";
 
 describe("textParser - cleanMarkdown", () => {
@@ -294,5 +295,31 @@ describe("textParser - charOffset (cursor sync)", () => {
       "first body word must be located after the frontmatter"
     );
     assert.strictEqual(source.slice(words[0].charOffset!), source.slice(frontmatterEnd));
+  });
+});
+
+describe("textParser - зона фокуса (splitWordForOrp)", () => {
+  it("по умолчанию подсвечивает одну букву в ORP", () => {
+    const z = splitWordForOrp("проект", 1);
+    assert.deepStrictEqual(z, { prefix: "пр", focusChar: "о", suffix: "ект" });
+  });
+
+  it("расширяется до 2 и 3 букв", () => {
+    assert.deepStrictEqual(splitWordForOrp("скорочтение", 2), { prefix: "ско", focusChar: "ро", suffix: "чтение" });
+    assert.deepStrictEqual(splitWordForOrp("административный", 3), { prefix: "адми", focusChar: "нис", suffix: "тративный" });
+  });
+
+  it("не съедает пунктуацию и не выходит за границы коротких слов", () => {
+    assert.deepStrictEqual(splitWordForOrp("слово,", 3), { prefix: "с", focusChar: "лов", suffix: "о," });
+    assert.deepStrictEqual(splitWordForOrp("и", 3), { prefix: "", focusChar: "и", suffix: "" });
+    assert.deepStrictEqual(splitWordForOrp("кот", 3), { prefix: "к", focusChar: "от", suffix: "" });
+  });
+
+  it("parseWords прокидывает ширину зоны в результат", () => {
+    const opts = { pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4, orpWidth: 2 };
+    const [w] = parseWords("проект", opts);
+    assert.strictEqual(w.prefix, "пр");
+    assert.strictEqual(w.focusChar, "ое");
+    assert.strictEqual(w.suffix, "кт");
   });
 });

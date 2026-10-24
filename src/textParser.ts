@@ -16,6 +16,8 @@ export interface ParseOptions {
   paragraphPauseMultiplier?: number;
   pauseOnNumbersAndAcronyms?: boolean;
   spritzVariableTiming?: boolean; // Spritz feature 4: non-linear length timing
+  /** Сколько букв подсвечивать в зоне фокуса: 1 (как в Spritz), 2 или 3. */
+  orpWidth?: number;
 }
 
 /**
@@ -100,6 +102,43 @@ export function getOrpIndex(word: string): number {
 }
 
 /**
+ * Делит слово на три части вокруг зоны фокуса.
+ *
+ * Зона начинается в ORP (оптимальная точка распознавания) и состоит из `width`
+ * букв. Хвостовая пунктуация в зону не попадает: для «слово,» с width=3
+ * подсветятся буквы ядра, а запятая останется в суффиксе.
+ */
+export function splitWordForOrp(
+  token: string,
+  width: number = 1
+): { prefix: string; focusChar: string; suffix: string } {
+  const match = token.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
+  const safeWidth = Math.max(1, Math.min(3, Math.round(width)));
+
+  if (!match) {
+    const start = Math.floor(token.length / 2);
+    return {
+      prefix: token.slice(0, start),
+      focusChar: token.slice(start, start + safeWidth) || token.charAt(start),
+      suffix: token.slice(start + safeWidth),
+    };
+  }
+
+  const prefixPunct = match[1];
+  const coreWord = match[2];
+  const suffixPunct = match[3];
+  const orp = getOrpIndex(token);
+  const coreEnd = prefixPunct.length + coreWord.length;
+  const zoneEnd = Math.min(orp + safeWidth, coreEnd);
+
+  return {
+    prefix: token.slice(0, orp),
+    focusChar: token.slice(orp, zoneEnd),
+    suffix: token.slice(zoneEnd),
+  };
+}
+
+/**
  * Parses cleaned text into a sequence of ParsedWords with ORP segments,
  * paragraph boundary awareness, and Spritz variable pacing.
  */
@@ -138,10 +177,7 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       const token = mergedTokens[tIdx];
       const isParagraphEnd = tIdx === mergedTokens.length - 1 && !isLastParagraph;
 
-      const orp = getOrpIndex(token);
-      const prefix = token.slice(0, orp);
-      const focusChar = token.charAt(orp) || "";
-      const suffix = token.slice(orp + 1);
+      const { prefix, focusChar, suffix } = splitWordForOrp(token, options.orpWidth ?? 1);
 
       // Spritz Feature 4: Variable duration based on word length
       const coreWord = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
