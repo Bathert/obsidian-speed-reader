@@ -423,6 +423,7 @@ export default class SpeedReaderPlugin extends Plugin {
     paragraphPauseMultiplier: number;
     pauseOnNumbersAndAcronyms: boolean;
     spritzVariableTiming: boolean;
+    readCodeBlocks: boolean;
     orpWidth: number;
   } {
     return {
@@ -433,6 +434,7 @@ export default class SpeedReaderPlugin extends Plugin {
       paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
       spritzVariableTiming: this.settings.spritzVariableTiming,
+      readCodeBlocks: this.settings.readCodeBlocks,
       orpWidth: this.settings.orpWidth ?? 1,
     };
   }

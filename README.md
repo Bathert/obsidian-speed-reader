@@ -19,6 +19,13 @@ Russian version: [README.ru.md](README.ru.md)
 - **Rewind on pause** steps three words back, so the context is never lost.
 - **Pauses on punctuation, paragraph breaks, numbers, and acronyms** use configurable multipliers.
 
+### Technical notes: code, math and tables
+
+- **Fenced code blocks** are skipped by default so a listing does not interrupt the rhythm; enable **Read code in notes** to read them word by word.
+- **Display math** (`$$...$$`, `\[...\]`) is skipped. Short inline math (`$x$`, `$O(n)$`) is read as plain text; long inline formulas are skipped instead of being spelled out symbol by symbol.
+- **Tables** are flattened into their cells, pipes never reach the reader, and each row ends with a short comma pause.
+- The reader window shrinks with the app window (`dvh`-based frame and padding), so the word, progress bar and controls stay visible in short windows instead of being clipped.
+
 ### Chunking and bionic reading
 
 - Show one, two, or three words per frame.

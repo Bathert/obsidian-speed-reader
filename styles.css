@@ -710,7 +710,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   width: min(820px, calc(100vw - 40px));
   max-width: 820px;
   max-height: calc(100dvh - 40px);
-  padding: 28px 32px;
+  padding: clamp(16px, 3dvh, 28px) 32px;
   border: 1px solid var(--sr-line);
   border-radius: 18px;
   background: var(--sr-panel);
@@ -724,7 +724,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   flex-direction: column;
   align-items: stretch;
   gap: 10px;
-  padding: 0 28px 18px 0;
+  padding: 0 28px clamp(8px, 2dvh, 18px) 0;
   margin: 0;
   border-bottom: 1px solid var(--sr-line);
 }
@@ -733,9 +733,9 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 .sr-modal-container .sr-title-meta { font-size: 12px; white-space: nowrap; color: var(--text-muted); }
 .sr-modal-container .sr-shortcuts-hint { font-size: 11px; line-height: 1.6; color: var(--text-muted); letter-spacing: 0; text-wrap: pretty; }
 .sr-modal-container .sr-frame {
-  min-height: 210px;
-  padding: 42px 24px;
-  margin: 22px 0 16px;
+  min-height: clamp(130px, 24dvh, 210px);
+  padding: clamp(18px, 4dvh, 42px) 24px;
+  margin: clamp(10px, 2dvh, 22px) 0 clamp(8px, 1.6dvh, 16px);
   border-radius: 12px;
   background: var(--sr-inset);
   border: 1px solid var(--sr-line);
@@ -746,7 +746,7 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
 .sr-modal-container .sr-context-preview {
   font-size: 14px;
   line-height: 1.8;
-  margin: 0 0 22px;
+  margin: 0 0 clamp(10px, 2dvh, 22px);
   padding: 0 12px;
   min-height: 26px;
   color: var(--text-muted);

@@ -205,6 +205,7 @@ var DEFAULT_SETTINGS = {
   // Spritz Redicle & Timing
   redicleAlignment: "spritz",
   spritzVariableTiming: true,
+  readCodeBlocks: false,
   // Feature 4: Audio / TTS
   enableTts: false,
   // Top Feature 5
@@ -412,6 +413,12 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         heading: "\u0423\u043C\u043D\u044B\u0439 \u0442\u0435\u043C\u043F (Smart Pacing & Rhythm)",
         items: [
           {
+            name: "\u0427\u0438\u0442\u0430\u0442\u044C \u043A\u043E\u0434 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0430\u0445",
+            desc: "\u0427\u0438\u0442\u0430\u0442\u044C \u0441\u043E\u0434\u0435\u0440\u0436\u0438\u043C\u043E\u0435 \u0431\u043B\u043E\u043A\u043E\u0432 ```\u043A\u043E\u0434``` \u043F\u043E \u0441\u043B\u043E\u0432\u0430\u043C. \u0412\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u043E: \u043A\u043E\u0434 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0435\u0442\u0441\u044F, \u0447\u0442\u043E\u0431\u044B \u043D\u0435 \u0440\u0432\u0430\u0442\u044C \u0440\u0438\u0442\u043C",
+            aliases: ["readCodeBlocks", "code"],
+            control: { type: "toggle", key: "readCodeBlocks", defaultValue: DEFAULT_SETTINGS.readCodeBlocks }
+          },
+          {
             name: "\u0414\u0437\u0435\u043D-\u0440\u0435\u0436\u0438\u043C \u0432\u043E \u0432\u0440\u0435\u043C\u044F \u0447\u0442\u0435\u043D\u0438\u044F",
             desc: "\u041F\u0440\u0438\u0433\u043B\u0443\u0448\u0430\u0442\u044C \u0448\u0430\u043F\u043A\u0443, \u043F\u043E\u043B\u0437\u0443\u043D\u043E\u043A \u0438 \u043A\u043D\u043E\u043F\u043A\u0438 \u0432\u043E \u0432\u0440\u0435\u043C\u044F \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F (\u043A\u043B\u0430\u0432\u0438\u0448\u0430 F)",
             aliases: ["zenMode", "distraction free"],
@@ -612,10 +619,10 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
 var import_obsidian2 = require("obsidian");
 
 // src/textParser.ts
-function cleanMarkdown(text) {
-  return cleanMarkdownWithOffsets(text).text;
+function cleanMarkdown(text, readCodeBlocks = false) {
+  return cleanMarkdownWithOffsets(text, readCodeBlocks).text;
 }
-function cleanMarkdownWithOffsets(text) {
+function cleanMarkdownWithOffsets(text, readCodeBlocks = false) {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
   const replace = (pattern, replacement) => {
@@ -626,18 +633,27 @@ function cleanMarkdownWithOffsets(text) {
     };
     let end = 0;
     cleaned = cleaned.replace(pattern, (...args) => {
+      var _a, _b;
       const match = args[0];
       const start2 = args[args.length - 2];
       appendOffsets(end, start2);
       end = start2 + match.length;
       if (!replacement) return "";
-      const group = Number(replacement.slice(1));
+      const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
+      if (!groupMatch) {
+        for (let i = 0; i < replacement.length; i++) nextOffsets.push((_a = offsets[start2]) != null ? _a : 0);
+        return replacement;
+      }
+      const group = Number(groupMatch[1]);
+      const suffix = groupMatch[2];
       const flags = pattern.flags.replace(/[gd]/g, "") + "d";
       const localPattern = new RegExp(pattern.source, flags);
       const localMatch = localPattern.exec(match);
       const range = localMatch.indices[group];
       appendOffsets(start2 + range[0], start2 + range[1]);
-      return args[group];
+      if (!suffix) return args[group];
+      for (let i = 0; i < suffix.length; i++) nextOffsets.push((_b = offsets[start2 + range[1] - 1]) != null ? _b : 0);
+      return String(args[group]) + suffix;
     });
     appendOffsets(end, offsets.length);
     offsets = nextOffsets;
@@ -648,8 +664,16 @@ function cleanMarkdownWithOffsets(text) {
   }
   replace(/%%[\s\S]*?%%/g, "");
   replace(/<!--[\s\S]*?-->/g, "");
-  replace(/```[\s\S]*?```/g, "");
+  if (readCodeBlocks) {
+    replace(/^[ \t]*```[^\n]*$/gm, "");
+  } else {
+    replace(/```[\s\S]*?```/g, "");
+  }
   replace(/\$\$[\s\S]*?\$\$/g, "");
+  replace(/\\\[[\s\S]*?\\\]/g, "");
+  replace(/\\\(([\s\S]*?)\\\)/g, "$1");
+  replace(/\$([^$\n]{1,40})\$/g, "$1");
+  replace(/\$[^$]*\$/g, "");
   replace(/`([^`]+)`/g, "$1");
   replace(/!\[\[.*?\]\]/g, "");
   replace(/!\[.*?\]\(.*?\)/g, "");
@@ -667,6 +691,8 @@ function cleanMarkdownWithOffsets(text) {
   replace(/~~(.*?)~~/g, "$1");
   replace(/^\s*>\s*/gm, "");
   replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
+  replace(/^[ \t]*\|(.*?)\|[ \t]*$/gm, "$1 ,");
+  replace(/[ \t]*\|[ \t]*/g, " ");
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
   replace(/^\s*[-*+]\s+/gm, "");
   replace(/^\s*\d+\.\s+/gm, "");
@@ -720,8 +746,8 @@ function splitWordForOrp(token, width = 1) {
   };
 }
 function parseWords(text, options) {
-  var _a, _b;
-  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text);
+  var _a, _b, _c;
+  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text, (_a = options.readCodeBlocks) != null ? _a : false);
   if (!cleaned.trim()) return [];
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result = [];
@@ -742,7 +768,7 @@ function parseWords(text, options) {
     for (let tIdx = 0; tIdx < mergedTokens.length; tIdx++) {
       const token = mergedTokens[tIdx];
       const isParagraphEnd = tIdx === mergedTokens.length - 1 && !isLastParagraph;
-      const { prefix, focusChar, suffix } = splitWordForOrp(token, (_a = options.orpWidth) != null ? _a : 1);
+      const { prefix, focusChar, suffix } = splitWordForOrp(token, (_b = options.orpWidth) != null ? _b : 1);
       const coreWord = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
       let lengthMultiplier = 1;
       if (options.spritzVariableTiming !== false) {
@@ -761,7 +787,7 @@ function parseWords(text, options) {
       let punctMultiplier = 1;
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
-          punctMultiplier = (_b = options.paragraphPauseMultiplier) != null ? _b : 2.5;
+          punctMultiplier = (_c = options.paragraphPauseMultiplier) != null ? _c : 2.5;
         } else if (isSentenceEndWord(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
@@ -973,7 +999,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
       spritzVariableTiming: this.settings.spritzVariableTiming,
-      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
+      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1,
+      readCodeBlocks: this.settings.readCodeBlocks
     });
     this.headings = extractHeadings(text, this.words);
     if (typeof callbacksOrSync === "object" && typeof (callbacksOrSync == null ? void 0 : callbacksOrSync.initialIndex) === "number") {
@@ -2012,6 +2039,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
       spritzVariableTiming: this.settings.spritzVariableTiming,
+      readCodeBlocks: this.settings.readCodeBlocks,
       orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
     };
   }

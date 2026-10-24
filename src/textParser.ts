@@ -30,6 +30,8 @@ export interface ParseOptions {
   paragraphPauseMultiplier?: number;
   pauseOnNumbersAndAcronyms?: boolean;
   spritzVariableTiming?: boolean; // Spritz feature 4: non-linear length timing
+  /** Read fenced code blocks instead of skipping them. */
+  readCodeBlocks?: boolean;
   /** Сколько букв подсвечивать в зоне фокуса: 1 (как в Spritz), 2 или 3. */
   orpWidth?: number;
 }
@@ -37,12 +39,12 @@ export interface ParseOptions {
 /**
  * Strips markdown syntax to extract readable words for RSVP.
  */
-export function cleanMarkdown(text: string): string {
-  return cleanMarkdownWithOffsets(text).text;
+export function cleanMarkdown(text: string, readCodeBlocks: boolean = false): string {
+  return cleanMarkdownWithOffsets(text, readCodeBlocks).text;
 }
 
 /** Keep source positions through exactly the same transformations as visible text. */
-function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number[] } {
+function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false): { text: string; offsets: number[] } {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
   const replace = (pattern: RegExp, replacement: string): void => {
@@ -60,7 +62,14 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
       appendOffsets(end, start);
       end = start + match.length;
       if (!replacement) return "";
-      const group = Number(replacement.slice(1));
+      const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
+      if (!groupMatch) {
+        // Literal replacement (e.g. a space between table cells).
+        for (let i = 0; i < replacement.length; i++) nextOffsets.push(offsets[start] ?? 0);
+        return replacement;
+      }
+      const group = Number(groupMatch[1]);
+      const suffix = groupMatch[2];
       // Re-execute on this match to obtain the retained group's exact position,
       // even when hidden link targets contain the same text as their label.
       const flags = pattern.flags.replace(/[gd]/g, "") + "d";
@@ -68,7 +77,11 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
       const localMatch = localPattern.exec(match) as (RegExpExecArray & { indices: [number, number][] }) | null;
       const range = localMatch!.indices[group];
       appendOffsets(start + range[0], start + range[1]);
-      return args[group] as string;
+      if (!suffix) return args[group] as string;
+      // Synthetic punctuation has no source position; map it to the group's
+      // last character so word offsets stay valid.
+      for (let i = 0; i < suffix.length; i++) nextOffsets.push(offsets[start + range[1] - 1] ?? 0);
+      return String(args[group]) + suffix;
     });
     appendOffsets(end, offsets.length);
     offsets = nextOffsets;
@@ -85,11 +98,21 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   replace(/%%[\s\S]*?%%/g, "");
   replace(/<!--[\s\S]*?-->/g, "");
 
-  // Remove code blocks
-  replace(/```[\s\S]*?```/g, "");
+  // Code blocks: skipped for prose reading, or unwrapped when reading code.
+  if (readCodeBlocks) {
+    replace(/^[ \t]*```[^\n]*$/gm, "");
+  } else {
+    replace(/```[\s\S]*?```/g, "");
+  }
 
-  // Remove display math
+  // Display math (block and bracket forms) is not read word by word.
   replace(/\$\$[\s\S]*?\$\$/g, "");
+  replace(/\\\[[\s\S]*?\\\]/g, "");
+
+  // Inline math: keep short variables ($x$, $O(n)$) as text, drop formulas.
+  replace(/\\\(([\s\S]*?)\\\)/g, "$1");
+  replace(/\$([^$\n]{1,40})\$/g, "$1");
+  replace(/\$[^$]*\$/g, "");
 
   // Remove inline code
   replace(/`([^`]+)`/g, "$1");
@@ -133,6 +156,10 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
 
   // Remove markdown table separator lines |---|---|
   replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
+
+  // Tables: keep the cells as readable words, end each row with a pause.
+  replace(/^[ \t]*\|(.*?)\|[ \t]*$/gm, "$1 ,");
+  replace(/[ \t]*\|[ \t]*/g, " ");
 
   // Remove task list checkboxes like - [ ] or - [x]
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
@@ -220,7 +247,7 @@ export function splitWordForOrp(
  * paragraph boundary awareness, and Spritz variable pacing.
  */
 export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
-  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text);
+  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text, options.readCodeBlocks ?? false);
   if (!cleaned.trim()) return [];
 
   // Split into paragraphs by double newlines

@@ -122,6 +122,7 @@ export class SpeedReaderModal extends Modal {
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
       spritzVariableTiming: this.settings.spritzVariableTiming,
       orpWidth: this.settings.orpWidth ?? 1,
+      readCodeBlocks: this.settings.readCodeBlocks,
     });
 
     this.headings = extractHeadings(text, this.words);

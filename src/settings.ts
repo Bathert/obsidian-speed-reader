@@ -72,6 +72,8 @@ export interface SpeedReaderSettings {
   // Spritz Redicle & Timing
   redicleAlignment: "spritz" | "center";
   spritzVariableTiming: boolean;
+  /** Read fenced code blocks instead of skipping them. */
+  readCodeBlocks: boolean;
 
   // Feature 4: Audio / TTS
   enableTts: boolean;
@@ -125,6 +127,7 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   // Spritz Redicle & Timing
   redicleAlignment: "spritz",
   spritzVariableTiming: true,
+  readCodeBlocks: false,
 
   // Feature 4: Audio / TTS
   enableTts: false,
@@ -326,6 +329,12 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
         type: "group",
         heading: "Умный темп (Smart Pacing & Rhythm)",
         items: [
+          {
+            name: "Читать код в заметках",
+            desc: "Читать содержимое блоков ```код``` по словам. Выключено: код пропускается, чтобы не рвать ритм",
+            aliases: ["readCodeBlocks", "code"],
+            control: { type: "toggle", key: "readCodeBlocks", defaultValue: DEFAULT_SETTINGS.readCodeBlocks },
+          },
           {
             name: "Дзен-режим во время чтения",
             desc: "Приглушать шапку, ползунок и кнопки во время воспроизведения (клавиша F)",

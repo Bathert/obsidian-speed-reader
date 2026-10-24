@@ -154,3 +154,40 @@ describe("textParser - table cleanup regressions", () => {
     assert.match(source[word.charOffset!] ?? "", /\p{L}/u);
   });
 });
+
+describe("textParser - technical notes", () => {
+  const code = "Текст до.\n\n```ts\nconst x = 1;\n```\n\nТекст после.";
+
+  it("skips fenced code blocks by default", () => {
+    const words = parseWords(code, defaultOpts).map((word) => word.raw);
+    assert.ok(!words.includes("const"));
+    assert.ok(words.includes("до."));
+    assert.ok(words.includes("после."));
+  });
+
+  it("reads fenced code when readCodeBlocks is enabled", () => {
+    const words = parseWords(code, { ...defaultOpts, readCodeBlocks: true }).map((word) => word.raw);
+    assert.ok(words.includes("const"));
+    assert.ok(words.some((word) => word.startsWith("x")));
+    assert.ok(words.includes("1;"));
+    assert.ok(!words.some((word) => word.includes("```")));
+  });
+
+  it("drops display math and long formulas but keeps short inline variables", () => {
+    const input = "Формула $$E = mc^2$$ и переменная $x$ вместе с $\frac{a}{b} + c$ конец.";
+    const words = parseWords(input, defaultOpts).map((word) => word.raw);
+    assert.ok(!words.some((word) => word.includes("mui")));
+    assert.ok(!words.some((word) => word.includes("$$")));
+    assert.ok(words.includes("x"));
+    assert.ok(!words.some((word) => word.includes("frac")));
+  });
+
+  it("flattens table rows into words and pauses at row end", () => {
+    const table = "| Имя | Роль |\n| --- | --- |\n| Том | принц |";
+    const words = parseWords(table, { ...defaultOpts, pauseOnPunctuation: true, pauseOnParagraphs: true, paragraphPauseMultiplier: 2.5 });
+    const raw = words.map((word) => word.raw);
+    assert.deepEqual(raw, ["Имя", "Роль ,", "Том", "принц ,"]);
+    assert.ok(words.every((word) => !word.raw.includes("|")));
+    assert.ok(words.at(-1)!.delayMultiplier > 1, "row end gets a pause multiplier");
+  });
+});
