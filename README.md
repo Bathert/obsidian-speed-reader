@@ -127,6 +127,15 @@ Use Node.js 24 or newer and npm. `npm ci` installs dependencies; `npm run check`
 
 The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.3.3`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
 
+## Feedback
+
+- Questions and suggestions: **myprofession.pain@gmail.com**
+- Bug reports and feature requests: [GitHub issues](https://github.com/Bathert/obsidian-speed-reader/issues)
+
+## Network use
+
+The plugin works offline by default. The only network requests are made when **Unreal Speech** is selected as the speech engine: the current sentence is sent to `api.v8.unrealspeech.com` to synthesize audio, and nothing else leaves the device. No telemetry, no analytics, no ads. The API key is stored locally in this vault's plugin data. If you keep the system voice, the plugin makes no network requests at all.
+
 ## Licence
 
 Mozilla Public License 2.0 (MPL-2.0). See [LICENSE](LICENSE). In short: you may use, modify, and redistribute the plugin, including in closed-source projects, but modifications to these MPL-covered files must stay under the MPL and be made available.
