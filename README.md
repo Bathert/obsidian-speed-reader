@@ -1,6 +1,6 @@
 # Speed Reader (RSVP) for Obsidian
 
-Read a note or a selection one word at a time with rapid serial visual presentation (RSVP): an optimal recognition point (ORP) highlight, adjustable speed, smart pauses, chunking, a table of contents, saved positions, reading statistics, and optional text-to-speech through the system voice or the Unreal Speech cloud API. Requires Obsidian 1.13.0 or newer. Current version: **1.3.3**.
+Read a note or a selection one word at a time with rapid serial visual presentation (RSVP): an optimal recognition point (ORP) highlight, adjustable speed, smart pauses, chunking, a table of contents, saved positions, reading statistics, and optional text-to-speech through the system voice or the Unreal Speech cloud API. Requires Obsidian 1.13.0 or newer. Current version: **1.3.4**.
 
 Russian version: [README.ru.md](README.ru.md)
 
@@ -125,7 +125,7 @@ The settings tab uses the declarative settings API, so its controls appear in Ob
 
 Use Node.js 24 or newer and npm. `npm ci` installs dependencies; `npm run check` type-checks, lints, tests, and builds; `npm run test:coverage` prints coverage for the pure logic modules.
 
-The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.3.3`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
+The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.3.4`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
 
 ## Feedback
 
