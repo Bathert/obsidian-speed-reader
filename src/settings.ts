@@ -232,8 +232,8 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
           .addOption("spritz", "Spritz Redicle (35% слева / 65% справа)")
           .addOption("center", "Строго по центру (50/50)")
           .setValue(this.plugin.settings.redicleAlignment)
-          .onChange(async (value: "spritz" | "center") => {
-            this.plugin.settings.redicleAlignment = value;
+          .onChange(async (value) => {
+            this.plugin.settings.redicleAlignment = value === "center" ? "center" : "spritz";
             await this.plugin.saveSettings();
           })
       );
