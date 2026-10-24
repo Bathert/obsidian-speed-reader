@@ -136,6 +136,7 @@ var DEFAULT_SETTINGS = {
   fontSize: 44,
   readerFont: "theme",
   highlightOrp: true,
+  orpWidth: 1,
   orpColor: "#e63946",
   showFixationGuide: true,
   pauseOnPunctuation: true,
@@ -240,6 +241,15 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         this.plugin.settings.highlightOrp = value;
         await this.plugin.saveSettings();
       })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0431\u0443\u043A\u0432 \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0438\u0432\u0430\u0442\u044C (\u0437\u043E\u043D\u0430 \u0444\u043E\u043A\u0443\u0441\u0430)").setDesc("1 \u2014 \u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 Spritz: \u043E\u0434\u043D\u0430 \u043A\u0440\u0430\u0441\u043D\u0430\u044F \u0431\u0443\u043A\u0432\u0430. 2\u20133 \u2014 \u0448\u0438\u0440\u0435 \u0437\u043E\u043D\u0430 \u0440\u0430\u0441\u043F\u043E\u0437\u043D\u0430\u0432\u0430\u043D\u0438\u044F, \u043B\u0435\u0433\u0447\u0435 \u0443\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u043E \u043D\u0430 \u0432\u044B\u0441\u043E\u043A\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438").addDropdown(
+      (dropdown) => {
+        var _a;
+        return dropdown.addOption("1", "1 \u0431\u0443\u043A\u0432\u0430").addOption("2", "2 \u0431\u0443\u043A\u0432\u044B").addOption("3", "3 \u0431\u0443\u043A\u0432\u044B").setValue(String((_a = this.plugin.settings.orpWidth) != null ? _a : 1)).onChange(async (value) => {
+          this.plugin.settings.orpWidth = Math.max(1, Math.min(3, parseInt(value, 10) || 1));
+          await this.plugin.saveSettings();
+        });
+      }
     );
     new import_obsidian.Setting(containerEl).setName("\u0426\u0432\u0435\u0442 \u0431\u0443\u043A\u0432\u044B-\u0444\u043E\u043A\u0443\u0441\u0430").setDesc("Hex-\u043A\u043E\u0434 \u0446\u0432\u0435\u0442\u0430 \u0438\u043B\u0438 CSS (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, #e63946)").addText(
       (text) => text.setPlaceholder("#e63946").setValue(this.plugin.settings.orpColor).onChange(async (value) => {
@@ -391,8 +401,31 @@ function getOrpIndex(word) {
   }
   return prefixPunctLen + coreOrp;
 }
+function splitWordForOrp(token, width = 1) {
+  const match = token.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
+  const safeWidth = Math.max(1, Math.min(3, Math.round(width)));
+  if (!match) {
+    const start = Math.floor(token.length / 2);
+    return {
+      prefix: token.slice(0, start),
+      focusChar: token.slice(start, start + safeWidth) || token.charAt(start),
+      suffix: token.slice(start + safeWidth)
+    };
+  }
+  const prefixPunct = match[1];
+  const coreWord = match[2];
+  const suffixPunct = match[3];
+  const orp = getOrpIndex(token);
+  const coreEnd = prefixPunct.length + coreWord.length;
+  const zoneEnd = Math.min(orp + safeWidth, coreEnd);
+  return {
+    prefix: token.slice(0, orp),
+    focusChar: token.slice(orp, zoneEnd),
+    suffix: token.slice(zoneEnd)
+  };
+}
 function parseWords(text, options) {
-  var _a;
+  var _a, _b;
   const cleaned = cleanMarkdown(text);
   if (!cleaned.trim()) return [];
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
@@ -414,10 +447,7 @@ function parseWords(text, options) {
     for (let tIdx = 0; tIdx < mergedTokens.length; tIdx++) {
       const token = mergedTokens[tIdx];
       const isParagraphEnd = tIdx === mergedTokens.length - 1 && !isLastParagraph;
-      const orp = getOrpIndex(token);
-      const prefix = token.slice(0, orp);
-      const focusChar = token.charAt(orp) || "";
-      const suffix = token.slice(orp + 1);
+      const { prefix, focusChar, suffix } = splitWordForOrp(token, (_a = options.orpWidth) != null ? _a : 1);
       const coreWord = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
       let lengthMultiplier = 1;
       if (options.spritzVariableTiming !== false) {
@@ -432,7 +462,7 @@ function parseWords(text, options) {
       let punctMultiplier = 1;
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
-          punctMultiplier = (_a = options.paragraphPauseMultiplier) != null ? _a : 2.5;
+          punctMultiplier = (_b = options.paragraphPauseMultiplier) != null ? _b : 2.5;
         } else if (/[.!?…]+["')\]}]*$/.test(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["')\]}]*$/.test(token)) {
@@ -468,6 +498,7 @@ function parseWords(text, options) {
 var PROGRESS_SAVE_EVERY_WORDS = 25;
 var SpeedReaderModal = class extends import_obsidian2.Modal {
   constructor(app, plugin, text, title, noteKey = "", onSyncCursor) {
+    var _a;
     super(app);
     this.words = [];
     this.currentIndex = 0;
@@ -497,7 +528,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       pauseOnParagraphs: this.settings.pauseOnParagraphs,
       paragraphPauseMultiplier: this.settings.paragraphPauseMultiplier,
       pauseOnNumbersAndAcronyms: this.settings.pauseOnNumbersAndAcronyms,
-      spritzVariableTiming: this.settings.spritzVariableTiming
+      spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
     });
   }
   onOpen() {
