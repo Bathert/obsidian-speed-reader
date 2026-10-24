@@ -12,6 +12,9 @@ import {
   stepIndex,
 } from "./speedEngine";
 
+/** Flush the reading position to disk every N words. */
+const PROGRESS_SAVE_EVERY_WORDS = 25;
+
 export class SpeedReaderModal extends Modal {
   private plugin: SpeedReaderPlugin;
   private words: ParsedWord[] = [];
@@ -22,12 +25,13 @@ export class SpeedReaderModal extends Modal {
   private settings: SpeedReaderSettings;
   private titleText: string;
   private noteKey: string;
-  private onSyncCursor?: (wordIndex: number, rawWord: string) => void;
+  private onSyncCursor?: (wordIndex: number, rawWord: string, charOffset?: number) => void;
 
   // Session stats & ramp-up tracking
   private sessionWordsRead: number = 0;
   private sessionStartTime: number = Date.now();
   private isRampingUp: boolean = false;
+  private lastPersistedIndex: number = 0;
 
   // DOM Elements
   private resumeBannerEl!: HTMLElement;
@@ -42,7 +46,6 @@ export class SpeedReaderModal extends Modal {
   private progressLabel!: HTMLElement;
   private timeLeftLabel!: HTMLElement;
   private wpmDisplay!: HTMLElement;
-  private keydownHandler!: (e: KeyboardEvent) => void;
 
   constructor(
     app: App,
@@ -50,7 +53,7 @@ export class SpeedReaderModal extends Modal {
     text: string,
     title: string,
     noteKey: string = "",
-    onSyncCursor?: (wordIndex: number, rawWord: string) => void
+    onSyncCursor?: (wordIndex: number, rawWord: string, charOffset?: number) => void
   ) {
     super(app);
     this.plugin = plugin;
@@ -253,61 +256,63 @@ export class SpeedReaderModal extends Modal {
     this.updateWordDisplay();
     this.updateWpmDisplay();
 
-    // Keyboard handlers
-    this.keydownHandler = (e: KeyboardEvent) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // Keyboard handlers live on the modal's own scope: they stop working the
+    // moment the modal closes, never leak into the editor, and cooperate with
+    // other modals instead of a global `window` listener.
+    this.scope.register(null, null, (e: KeyboardEvent) => {
+      if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return true;
 
-      if (e.code === "Space") {
-        e.preventDefault();
-        this.togglePlay();
-      } else if (e.code === "ArrowLeft") {
-        e.preventDefault();
-        this.step(-this.settings.stepWordCount);
-      } else if (e.code === "ArrowRight") {
-        e.preventDefault();
-        this.step(this.settings.stepWordCount);
-      } else if (e.code === "ArrowUp") {
-        e.preventDefault();
-        this.adjustWpm(25);
-      } else if (e.code === "ArrowDown") {
-        e.preventDefault();
-        this.adjustWpm(-25);
-      } else if (e.code === "BracketLeft") {
-        e.preventDefault();
-        this.jumpSentence(-1);
-      } else if (e.code === "BracketRight") {
-        e.preventDefault();
-        this.jumpSentence(1);
-      } else if (e.key === "m" || e.key === "M" || e.key === "ь" || e.key === "Ь") {
-        e.preventDefault();
-        this.toggleTts(ttsBtn);
-      } else if (e.key === "r" || e.key === "R" || e.key === "к" || e.key === "К") {
-        e.preventDefault();
-        this.restart();
+      switch (e.key) {
+        case " ":
+          this.togglePlay();
+          return false;
+        case "ArrowLeft":
+          this.step(-this.settings.stepWordCount);
+          return false;
+        case "ArrowRight":
+          this.step(this.settings.stepWordCount);
+          return false;
+        case "ArrowUp":
+          this.adjustWpm(25);
+          return false;
+        case "ArrowDown":
+          this.adjustWpm(-25);
+          return false;
+        case "[":
+          this.jumpSentence(-1);
+          return false;
+        case "]":
+          this.jumpSentence(1);
+          return false;
+        case "m":
+        case "M":
+        case "ь":
+        case "Ь":
+          this.toggleTts(ttsBtn);
+          return false;
+        case "r":
+        case "R":
+        case "к":
+        case "К":
+          this.restart();
+          return false;
+        default:
+          return true;
       }
-    };
-    window.addEventListener("keydown", this.keydownHandler);
+    });
   }
 
   onClose() {
     this.pause(false);
     this.stopTts();
-    if (this.keydownHandler) {
-      window.removeEventListener("keydown", this.keydownHandler);
-    }
 
     // Feature 3: Save progress & cursor sync
-    if (this.noteKey && this.settings.rememberProgress) {
-      this.settings.noteProgress[this.noteKey] = {
-        index: this.currentIndex,
-        totalWords: this.words.length,
-        timestamp: Date.now(),
-      };
-    }
+    this.persistProgress();
 
     // Feature 3: Sync cursor in editor
-    if (this.settings.syncCursorOnClose && this.onSyncCursor && this.words[this.currentIndex]) {
-      this.onSyncCursor(this.currentIndex, this.words[this.currentIndex].raw);
+    const word = this.words[this.currentIndex];
+    if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
+      this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
     }
 
     // Feature 5: Update session analytics
@@ -491,9 +496,34 @@ export class SpeedReaderModal extends Modal {
         this.speakFromCurrentSentence();
       }
 
+      this.maybePersistProgress();
       this.updateWordDisplay();
       this.scheduleNextWord();
     }, wordDuration);
+  }
+
+  /**
+   * Writes the current position into settings without touching the disk.
+   */
+  private persistProgress() {
+    if (!this.noteKey || !this.settings.rememberProgress) return;
+    this.settings.noteProgress[this.noteKey] = {
+      index: this.currentIndex,
+      totalWords: this.words.length,
+      timestamp: Date.now(),
+    };
+    this.lastPersistedIndex = this.currentIndex;
+  }
+
+  /**
+   * Crash-safe saving: flushes to disk every PROGRESS_SAVE_EVERY words so a
+   * forced quit does not lose the reading position.
+   */
+  private maybePersistProgress() {
+    if (!this.noteKey || !this.settings.rememberProgress) return;
+    if (Math.abs(this.currentIndex - this.lastPersistedIndex) < PROGRESS_SAVE_EVERY_WORDS) return;
+    this.persistProgress();
+    void this.plugin.saveSettings();
   }
 
   private updateWordDisplay() {
@@ -561,14 +591,17 @@ export class SpeedReaderModal extends Modal {
     const start = Math.max(0, this.currentIndex - 3);
     const end = Math.min(this.words.length, this.currentIndex + 4);
 
-    const parts: string[] = [];
+    // Built as DOM nodes on purpose: note text must never be parsed as HTML.
+    this.contextEl.empty();
+    if (start > 0) this.contextEl.appendText("... ");
     for (let i = start; i < end; i++) {
+      if (i > start) this.contextEl.appendText(" ");
       if (i === this.currentIndex) {
-        parts.push(`<b>${this.words[i].raw}</b>`);
+        this.contextEl.createEl("b", { text: this.words[i].raw });
       } else {
-        parts.push(this.words[i].raw);
+        this.contextEl.appendText(this.words[i].raw);
       }
     }
-    this.contextEl.innerHTML = (start > 0 ? "... " : "") + parts.join(" ") + (end < this.words.length ? " ..." : "");
+    if (end < this.words.length) this.contextEl.appendText(" ...");
   }
 }
