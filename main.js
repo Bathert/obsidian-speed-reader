@@ -95,6 +95,40 @@ function calculateTimeSavedMinutes(totalWords, totalSecondsSpent) {
   const actualMinutes = totalSecondsSpent / 60;
   return Math.max(0, Math.round((standardMinutes - actualMinutes) * 10) / 10);
 }
+function calculateSessionSummary(wordsRead, activeSeconds, currentWpm, remainingWords) {
+  const safeWords = Math.max(0, wordsRead);
+  const minutes = Math.max(0, activeSeconds) / 60;
+  const avgWpm = minutes > 0 ? Math.round(safeWords / minutes) : 0;
+  const baselineMinutes = safeWords / 200;
+  const savedMinutes = Math.max(0, baselineMinutes - minutes);
+  const speedup = minutes > 0 ? Math.round(avgWpm / 200 * 10) / 10 : 0;
+  const remainingMinutes = Math.max(0, remainingWords) / Math.max(60, currentWpm);
+  return {
+    wordsRead: safeWords,
+    readSeconds: Math.round(Math.max(0, activeSeconds)),
+    avgWpm,
+    baselineMinutes: Math.round(baselineMinutes * 10) / 10,
+    savedSeconds: Math.round(savedMinutes * 60),
+    speedup,
+    remainingMinutes: Math.round(remainingMinutes * 10) / 10
+  };
+}
+function buildMotivationLine(avgWpm, targetWpm) {
+  if (avgWpm <= 0) return "\u041F\u043E\u0435\u0445\u0430\u043B\u0438: \u043F\u0440\u043E\u0431\u0435\u043B \u2014 \u0438 \u043F\u043E\u043D\u0435\u0441\u043B\u0430\u0441\u044C.";
+  if (avgWpm < 200) return "\u041F\u043E\u043A\u0430 \u043C\u0435\u0434\u043B\u0435\u043D\u043D\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E \u0447\u0442\u0435\u043D\u0438\u044F. \u041F\u043E\u043F\u0440\u043E\u0431\u0443\u0439 +50 WPM, \u043C\u043E\u0437\u0433 \u0431\u044B\u0441\u0442\u0440\u043E \u043F\u0440\u0438\u0432\u044B\u043A\u0430\u0435\u0442.";
+  if (avgWpm < 300) return "\u0423\u0436\u0435 \u0431\u044B\u0441\u0442\u0440\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E \u0447\u0442\u0435\u043D\u0438\u044F. \u0414\u0435\u0440\u0436\u0438 \u0440\u0438\u0442\u043C.";
+  if (avgWpm < 450) return "\u0425\u043E\u0440\u043E\u0448\u0438\u0439 \u0442\u0435\u043C\u043F: \u043E\u0431\u044B\u0447\u043D\u044B\u0439 \u0447\u0438\u0442\u0430\u0442\u0435\u043B\u044C \u0441\u0442\u043E\u043B\u044C\u043A\u043E \u043D\u0435 \u0432\u044B\u0442\u044F\u043D\u0435\u0442.";
+  if (avgWpm < 600) return "\u0421\u0438\u043B\u044C\u043D\u044B\u0439 \u0445\u043E\u0434. \u0422\u043E\u043B\u044C\u043A\u043E \u043D\u0435 \u0432 \u0443\u0449\u0435\u0440\u0431 \u043F\u043E\u043D\u0438\u043C\u0430\u043D\u0438\u044E: \u0435\u0441\u043B\u0438 \u043F\u043B\u044B\u0432\u0451\u0442 \u0441\u043C\u044B\u0441\u043B, \u0448\u0430\u0433\u043D\u0438 \u043D\u0430 -50.";
+  if (avgWpm > targetWpm + 50) return "\u041B\u0435\u0442\u0438\u0448\u044C \u0432\u044B\u0448\u0435 \u0446\u0435\u043B\u0438. \u0415\u0441\u043B\u0438 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u0432 \u0433\u043E\u043B\u043E\u0432\u0435 \u0440\u0430\u0441\u0441\u044B\u043F\u0430\u0435\u0442\u0441\u044F \u2014 \u043F\u0440\u0438\u0442\u043E\u0440\u043C\u043E\u0437\u0438 \u043D\u0430 50.";
+  return "\u041D\u0430 \u0442\u0430\u043A\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 \u043E\u0431\u044B\u0447\u043D\u043E \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442. \u041F\u0440\u043E\u0432\u0435\u0440\u044C, \u0447\u0442\u043E \u0441\u043C\u044B\u0441\u043B \u0434\u0435\u0440\u0436\u0438\u0442\u0441\u044F.";
+}
+function formatDuration(seconds) {
+  const safe = Math.max(0, Math.round(seconds));
+  if (safe < 60) return `${safe} \u0441`;
+  const minutes = safe / 60;
+  const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
+  return `${text} \u043C\u0438\u043D`;
+}
 
 // src/settings.ts
 var DEFAULT_SETTINGS = {
@@ -113,6 +147,7 @@ var DEFAULT_SETTINGS = {
   enableRampUp: true,
   rampUpWords: 15,
   rewindOnPause: true,
+  showPauseStats: true,
   rewindOnPauseWords: 3,
   pauseOnParagraphs: true,
   paragraphPauseMultiplier: 2.5,
@@ -240,6 +275,12 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
     new import_obsidian.Setting(containerEl).setName("\u0414\u043B\u0438\u043D\u0430 \u0440\u0430\u0437\u0433\u043E\u043D\u0430 (\u0441\u043B\u043E\u0432)").setDesc("\u0417\u0430 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0435\u0440\u0432\u044B\u0445 \u0441\u043B\u043E\u0432 \u0434\u043E\u0441\u0442\u0438\u0433\u0430\u0442\u044C \u0446\u0435\u043B\u0435\u0432\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 WPM").addSlider(
       (slider) => slider.setLimits(5, 40, 5).setValue(this.plugin.settings.rampUpWords).setDynamicTooltip().onChange(async (value) => {
         this.plugin.settings.rampUpWords = value;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian.Setting(containerEl).setName("\u0418\u0442\u043E\u0433\u0438 \u0438 \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043D\u0430 \u043F\u0430\u0443\u0437\u0435").setDesc("\u041F\u0440\u0438 \u043F\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0435 \u043D\u0430 \u043F\u0430\u0443\u0437\u0443 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E, \u0440\u0435\u0430\u043B\u044C\u043D\u0443\u044E \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C, \u044D\u043A\u043E\u043D\u043E\u043C\u0438\u044E \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0443\u044E \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044E").addToggle(
+      (toggle) => toggle.setValue(this.plugin.settings.showPauseStats !== false).onChange(async (value) => {
+        this.plugin.settings.showPauseStats = value;
         await this.plugin.saveSettings();
       })
     );
@@ -437,6 +478,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.sessionStartTime = Date.now();
     this.isRampingUp = false;
     this.lastPersistedIndex = 0;
+    // Активное время чтения без пауз — база для честной средней скорости.
+    this.activeSince = null;
+    this.activeMs = 0;
     this.plugin = plugin;
     this.settings = plugin.settings;
     this.currentWpm = this.settings.defaultWpm;
@@ -524,6 +568,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       const bottomGuide = frame.createDiv({ cls: "sr-guide sr-guide-bottom" });
       bottomGuide.createDiv({ cls: "sr-notch sr-notch-up" });
     }
+    this.pauseCardEl = contentEl.createDiv({ cls: "sr-pause-card" });
+    this.pauseCardEl.style.display = "none";
     this.contextEl = contentEl.createDiv({ cls: "sr-context-preview" });
     const progressContainer = contentEl.createDiv({ cls: "sr-progress-container" });
     this.progressBar = progressContainer.createEl("input", {
@@ -700,6 +746,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   play() {
     this.isPlaying = true;
+    this.activeSince = Date.now();
+    if (this.pauseCardEl) this.pauseCardEl.style.display = "none";
     (0, import_obsidian2.setIcon)(this.playPauseBtn, "pause");
     this.playPauseBtn.setAttribute("title", "\u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)");
     if (this.settings.enableTts) {
@@ -713,6 +761,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
    */
   pause(triggeredByUser = true) {
     this.isPlaying = false;
+    this.accumulateActiveTime();
     this.stopTts();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -730,6 +779,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       }
     }
     this.updateWpmDisplay();
+    if (triggeredByUser && this.settings.showPauseStats !== false) {
+      this.renderPauseCard();
+    }
   }
   restart() {
     this.goToWord(0);
@@ -818,6 +870,56 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (Math.abs(this.currentIndex - this.lastPersistedIndex) < PROGRESS_SAVE_EVERY_WORDS) return;
     this.persistProgress();
     void this.plugin.saveSettings();
+  }
+  accumulateActiveTime() {
+    if (this.activeSince === null) return;
+    this.activeMs += Date.now() - this.activeSince;
+    this.activeSince = null;
+  }
+  /**
+   * Итоги паузы: сколько прочитано, с какой реальной скоростью, сколько времени
+   * сэкономлено против обычного чтения и короткая мотивация.
+   */
+  renderPauseCard() {
+    if (!this.pauseCardEl) return;
+    const activeSeconds = (this.activeMs + (this.activeSince ? Date.now() - this.activeSince : 0)) / 1e3;
+    const remainingWords = Math.max(0, this.words.length - (this.currentIndex + 1));
+    const summary = calculateSessionSummary(
+      this.sessionWordsRead,
+      activeSeconds,
+      this.currentWpm,
+      remainingWords
+    );
+    this.pauseCardEl.empty();
+    this.pauseCardEl.addClass("sr-pause-card");
+    const head = this.pauseCardEl.createDiv({ cls: "sr-pause-card-head" });
+    head.createSpan({ text: "\u23F8 \u041F\u0430\u0443\u0437\u0430", cls: "sr-pause-card-title" });
+    head.createSpan({
+      text: ` \xB7 ${summary.wordsRead.toLocaleString()} \u0441\u043B\u043E\u0432 \u0437\u0430 ${formatDuration(summary.readSeconds)}`,
+      cls: "sr-pause-card-sub"
+    });
+    if (summary.wordsRead > 0) {
+      const wide = this.pauseCardEl.createDiv({ cls: "sr-pause-card-metrics" });
+      const metric = (label, value) => {
+        const cell = wide.createDiv({ cls: "sr-pause-metric" });
+        cell.createDiv({ text: value, cls: "sr-pause-metric-value" });
+        cell.createDiv({ text: label, cls: "sr-pause-metric-label" });
+      };
+      metric("\u0441\u0440\u0435\u0434\u043D\u044F\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C", `${summary.avgWpm} WPM`);
+      metric("\u0431\u044B\u0441\u0442\u0440\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E", `\xD7${summary.speedup}`);
+      metric("\u0441\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E", formatDuration(summary.savedSeconds));
+      metric("\u0434\u043E \u043A\u043E\u043D\u0446\u0430", formatDuration(summary.remainingMinutes * 60));
+    }
+    this.pauseCardEl.createDiv({
+      text: buildMotivationLine(summary.avgWpm, this.currentWpm),
+      cls: "sr-pause-card-motivation"
+    });
+    const pct = calculateProgressPercent(this.currentIndex, this.words.length);
+    this.pauseCardEl.createDiv({
+      text: `\u041F\u0440\u043E\u0433\u0440\u0435\u0441\u0441 ${pct}% \xB7 ${this.currentIndex + 1} / ${this.words.length} \u0441\u043B\u043E\u0432`,
+      cls: "sr-pause-card-progress"
+    });
+    this.pauseCardEl.style.display = "block";
   }
   updateWordDisplay() {
     const word = this.words[this.currentIndex];
