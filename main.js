@@ -211,7 +211,7 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
     );
     new import_obsidian.Setting(containerEl).setName("\u0412\u044B\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u043D\u0438\u0435 \u0440\u0430\u043C\u043A\u0438 Spritz (The Redicle)").setDesc("Spritz Redicle (\u0432\u0438\u0437\u0438\u0440 \u043D\u0430 35% \u0441\u043B\u0435\u0432\u0430) \u0434\u0430\u0435\u0442 \u0438\u0434\u0435\u0430\u043B\u044C\u043D\u044B\u0439 \u043E\u043F\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0431\u0430\u043B\u0430\u043D\u0441 \u0434\u043B\u044F \u0434\u043B\u0438\u043D\u043D\u044B\u0445 \u0441\u0443\u0444\u0444\u0438\u043A\u0441\u043E\u0432. \u0426\u0435\u043D\u0442\u0440 (50/50) \u2014 \u0441\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0435.").addDropdown(
       (dropdown) => dropdown.addOption("spritz", "Spritz Redicle (35% \u0441\u043B\u0435\u0432\u0430 / 65% \u0441\u043F\u0440\u0430\u0432\u0430)").addOption("center", "\u0421\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0446\u0435\u043D\u0442\u0440\u0443 (50/50)").setValue(this.plugin.settings.redicleAlignment).onChange(async (value) => {
-        this.plugin.settings.redicleAlignment = value;
+        this.plugin.settings.redicleAlignment = value === "center" ? "center" : "spritz";
         await this.plugin.saveSettings();
       })
     );
@@ -347,6 +347,7 @@ function parseWords(text, options) {
   if (!cleaned.trim()) return [];
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result = [];
+  let searchFrom = 0;
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const paragraph = paragraphs[pIdx];
     const rawTokens = paragraph.split(/\s+/).filter((w) => w.length > 0);
@@ -391,13 +392,22 @@ function parseWords(text, options) {
         }
       }
       const delayMultiplier = Math.round(lengthMultiplier * punctMultiplier * 100) / 100;
+      let charOffset;
+      if (coreWord.length > 0) {
+        const found = text.indexOf(coreWord, searchFrom);
+        if (found !== -1) {
+          charOffset = found;
+          searchFrom = found + coreWord.length;
+        }
+      }
       result.push({
         raw: token,
         prefix,
         focusChar,
         suffix,
         delayMultiplier,
-        isParagraphEnd
+        isParagraphEnd,
+        charOffset
       });
     }
   }
@@ -405,6 +415,7 @@ function parseWords(text, options) {
 }
 
 // src/readerModal.ts
+var PROGRESS_SAVE_EVERY_WORDS = 25;
 var SpeedReaderModal = class extends import_obsidian2.Modal {
   constructor(app, plugin, text, title, noteKey = "", onSyncCursor) {
     super(app);
@@ -416,6 +427,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.sessionWordsRead = 0;
     this.sessionStartTime = Date.now();
     this.isRampingUp = false;
+    this.lastPersistedIndex = 0;
     this.plugin = plugin;
     this.settings = plugin.settings;
     this.currentWpm = this.settings.defaultWpm;
@@ -569,54 +581,54 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     incSpeedLarge.onclick = () => this.adjustWpm(50);
     this.updateWordDisplay();
     this.updateWpmDisplay();
-    this.keydownHandler = (e) => {
-      if (e.ctrlKey || e.metaKey || e.altKey) return;
-      if (e.code === "Space") {
-        e.preventDefault();
-        this.togglePlay();
-      } else if (e.code === "ArrowLeft") {
-        e.preventDefault();
-        this.step(-this.settings.stepWordCount);
-      } else if (e.code === "ArrowRight") {
-        e.preventDefault();
-        this.step(this.settings.stepWordCount);
-      } else if (e.code === "ArrowUp") {
-        e.preventDefault();
-        this.adjustWpm(25);
-      } else if (e.code === "ArrowDown") {
-        e.preventDefault();
-        this.adjustWpm(-25);
-      } else if (e.code === "BracketLeft") {
-        e.preventDefault();
-        this.jumpSentence(-1);
-      } else if (e.code === "BracketRight") {
-        e.preventDefault();
-        this.jumpSentence(1);
-      } else if (e.key === "m" || e.key === "M" || e.key === "\u044C" || e.key === "\u042C") {
-        e.preventDefault();
-        this.toggleTts(ttsBtn);
-      } else if (e.key === "r" || e.key === "R" || e.key === "\u043A" || e.key === "\u041A") {
-        e.preventDefault();
-        this.restart();
+    this.scope.register(null, null, (e) => {
+      if (e.isComposing || e.ctrlKey || e.metaKey || e.altKey) return true;
+      switch (e.key) {
+        case " ":
+          this.togglePlay();
+          return false;
+        case "ArrowLeft":
+          this.step(-this.settings.stepWordCount);
+          return false;
+        case "ArrowRight":
+          this.step(this.settings.stepWordCount);
+          return false;
+        case "ArrowUp":
+          this.adjustWpm(25);
+          return false;
+        case "ArrowDown":
+          this.adjustWpm(-25);
+          return false;
+        case "[":
+          this.jumpSentence(-1);
+          return false;
+        case "]":
+          this.jumpSentence(1);
+          return false;
+        case "m":
+        case "M":
+        case "\u044C":
+        case "\u042C":
+          this.toggleTts(ttsBtn);
+          return false;
+        case "r":
+        case "R":
+        case "\u043A":
+        case "\u041A":
+          this.restart();
+          return false;
+        default:
+          return true;
       }
-    };
-    window.addEventListener("keydown", this.keydownHandler);
+    });
   }
   onClose() {
     this.pause(false);
     this.stopTts();
-    if (this.keydownHandler) {
-      window.removeEventListener("keydown", this.keydownHandler);
-    }
-    if (this.noteKey && this.settings.rememberProgress) {
-      this.settings.noteProgress[this.noteKey] = {
-        index: this.currentIndex,
-        totalWords: this.words.length,
-        timestamp: Date.now()
-      };
-    }
-    if (this.settings.syncCursorOnClose && this.onSyncCursor && this.words[this.currentIndex]) {
-      this.onSyncCursor(this.currentIndex, this.words[this.currentIndex].raw);
+    this.persistProgress();
+    const word = this.words[this.currentIndex];
+    if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
+      this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
     }
     const sessionSeconds = Math.round((Date.now() - this.sessionStartTime) / 1e3);
     if (this.sessionWordsRead > 0 && sessionSeconds > 0) {
@@ -768,9 +780,32 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       if (this.isPlaying && this.settings.enableTts && prevWord && /[.!?…]+["')\]}]*$/.test(prevWord.raw)) {
         this.speakFromCurrentSentence();
       }
+      this.maybePersistProgress();
       this.updateWordDisplay();
       this.scheduleNextWord();
     }, wordDuration);
+  }
+  /**
+   * Writes the current position into settings without touching the disk.
+   */
+  persistProgress() {
+    if (!this.noteKey || !this.settings.rememberProgress) return;
+    this.settings.noteProgress[this.noteKey] = {
+      index: this.currentIndex,
+      totalWords: this.words.length,
+      timestamp: Date.now()
+    };
+    this.lastPersistedIndex = this.currentIndex;
+  }
+  /**
+   * Crash-safe saving: flushes to disk every PROGRESS_SAVE_EVERY words so a
+   * forced quit does not lose the reading position.
+   */
+  maybePersistProgress() {
+    if (!this.noteKey || !this.settings.rememberProgress) return;
+    if (Math.abs(this.currentIndex - this.lastPersistedIndex) < PROGRESS_SAVE_EVERY_WORDS) return;
+    this.persistProgress();
+    void this.plugin.saveSettings();
   }
   updateWordDisplay() {
     const word = this.words[this.currentIndex];
@@ -821,15 +856,17 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (!this.contextEl) return;
     const start = Math.max(0, this.currentIndex - 3);
     const end = Math.min(this.words.length, this.currentIndex + 4);
-    const parts = [];
+    this.contextEl.empty();
+    if (start > 0) this.contextEl.appendText("... ");
     for (let i = start; i < end; i++) {
+      if (i > start) this.contextEl.appendText(" ");
       if (i === this.currentIndex) {
-        parts.push(`<b>${this.words[i].raw}</b>`);
+        this.contextEl.createEl("b", { text: this.words[i].raw });
       } else {
-        parts.push(this.words[i].raw);
+        this.contextEl.appendText(this.words[i].raw);
       }
     }
-    this.contextEl.innerHTML = (start > 0 ? "... " : "") + parts.join(" ") + (end < this.words.length ? " ..." : "");
+    if (end < this.words.length) this.contextEl.appendText(" ...");
   }
 };
 
@@ -895,7 +932,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
           content,
           ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note",
           noteKey,
-          (wordIndex, rawWord) => this.syncEditorCursor(editor, rawWord)
+          (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
         ).open();
       }
     });
@@ -965,11 +1002,17 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         content,
         ((_d = activeView.file) == null ? void 0 : _d.basename) || "Active Note",
         noteKey,
-        (wordIndex, rawWord) => this.syncEditorCursor(editor, rawWord)
+        (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
       ).open();
     }
   }
-  syncEditorCursor(editor, rawWord) {
+  syncEditorCursor(editor, rawWord, charOffset) {
+    if (typeof charOffset === "number" && charOffset >= 0) {
+      const pos = editor.offsetToPos(charOffset);
+      editor.setCursor(pos);
+      editor.scrollIntoView({ from: pos, to: pos }, true);
+      return;
+    }
     if (!rawWord) return;
     const doc = editor.getValue();
     const cleanWord = rawWord.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
