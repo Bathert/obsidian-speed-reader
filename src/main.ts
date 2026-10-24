@@ -15,6 +15,7 @@ import {
   formatTimeRemaining,
 } from "./speedEngine";
 import { I18N, resolveLanguage } from "./i18n";
+import { synthesizeSpeech, UnrealSpeechError } from "./unrealSpeech";
 
 /** One line of the built-in in-app diagnostics. */
 export interface SelfCheckResult {
@@ -167,6 +168,15 @@ export default class SpeedReaderPlugin extends Plugin {
 
     // Settings tab
     this.addSettingTab(new SpeedReaderSettingTab(this.app, this));
+
+    // Command: verify the Unreal Speech key with a one-word request
+    this.addCommand({
+      id: "speed-reader-test-tts",
+      name: "Test speech key",
+      callback: () => {
+        void this.testUnrealSpeech();
+      },
+    });
 
     // Command: built-in diagnostics, runnable without a terminal
     this.addCommand({
@@ -437,6 +447,27 @@ export default class SpeedReaderPlugin extends Plugin {
       readCodeBlocks: this.settings.readCodeBlocks,
       orpWidth: this.settings.orpWidth ?? 1,
     };
+  }
+
+  /** Verifies the Unreal Speech key with a one-word request. */
+  async testUnrealSpeech(): Promise<void> {
+    if (!this.settings.unrealSpeechApiKey.trim()) {
+      new Notice("Не задан ключ озвучки. Вставьте его в настройках плагина.");
+      return;
+    }
+    try {
+      const audio = await synthesizeSpeech("Проверка голоса.", {
+        apiKey: this.settings.unrealSpeechApiKey,
+        voiceId: this.settings.unrealSpeechVoiceId,
+        wpm: 300,
+      });
+      this.settings.unrealSpeechCharsUsed += 20;
+      await this.saveSettings();
+      new Notice(`✅ Ключ Unreal Speech работает, получено ${audio.byteLength} байт аудио.`, 8000);
+    } catch (error) {
+      const message = error instanceof UnrealSpeechError ? error.message : String(error);
+      new Notice(`❌ Ошибка Unreal Speech: ${message}`, 12000);
+    }
   }
 
   /** Updates the status bar reading estimate for the active note. */

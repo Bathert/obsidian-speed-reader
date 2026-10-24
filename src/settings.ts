@@ -8,6 +8,7 @@ import type { App, SettingDefinitionItem } from "obsidian";
 import type SpeedReaderPlugin from "./main";
 import { calculateTimeSavedMinutes } from "./speedEngine";
 import type { UiLanguage } from "./i18n";
+import { UNREAL_SPEECH_VOICES } from "./unrealSpeech";
 
 export interface NoteProgressRecord {
   index: number;
@@ -77,6 +78,13 @@ export interface SpeedReaderSettings {
 
   // Feature 4: Audio / TTS
   enableTts: boolean;
+  /** Voice engine: the system Web Speech API or the Unreal Speech cloud API. */
+  ttsProvider: "system" | "unrealspeech";
+  /** Bearer key for Unreal Speech; stored only in this vault's plugin data. */
+  unrealSpeechApiKey: string;
+  unrealSpeechVoiceId: string;
+  /** Local counter of characters sent to Unreal Speech. */
+  unrealSpeechCharsUsed: number;
 
   // Top Feature 5: Analytics & Stats
   stats: ReaderStats;
@@ -131,6 +139,10 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
 
   // Feature 4: Audio / TTS
   enableTts: false,
+  ttsProvider: "system",
+  unrealSpeechApiKey: "",
+  unrealSpeechVoiceId: "Scarlett",
+  unrealSpeechCharsUsed: 0,
 
   // Top Feature 5
   stats: {
@@ -176,6 +188,13 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
       value = value === "center" ? "center" : "spritz";
     } else if (key === "themeMode") {
       value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "unrealSpeechApiKey") {
+      value = typeof value === "string" ? value.trim() : "";
+    } else if (key === "ttsProvider") {
+      value = value === "unrealspeech" ? "unrealspeech" : "system";
+    } else if (key === "unrealSpeechVoiceId") {
+      const voice = typeof value === "string" ? value : "";
+      value = (UNREAL_SPEECH_VOICES as readonly string[]).includes(voice) ? voice : DEFAULT_SETTINGS.unrealSpeechVoiceId;
     } else if (key === "uiLanguage") {
       value = value === "ru" || value === "en" ? value : "auto";
     } else if (key === "stepWordCount") {
@@ -507,6 +526,61 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
             desc: "Процент прочтения и оценка времени для активной заметки в нижней панели Obsidian",
             aliases: ["showStatusBar", "status bar"],
             control: { type: "toggle", key: "showStatusBar", defaultValue: DEFAULT_SETTINGS.showStatusBar },
+          },
+          {
+            name: "Движок озвучки",
+            desc: "Системный Web Speech API (офлайн, голоса ОС) или Unreal Speech (облако, нужен ключ и лимит символов)",
+            aliases: ["ttsProvider", "tts", "unreal speech"],
+            control: {
+              type: "dropdown",
+              key: "ttsProvider",
+              defaultValue: String(DEFAULT_SETTINGS.ttsProvider),
+              options: {
+                system: "Системный (Web Speech)",
+                unrealspeech: "Unreal Speech (API-ключ)",
+              },
+            },
+          },
+          {
+            name: "Ключ Unreal Speech",
+            desc: "Bearer-ключ из unrealspeech.com/dashboard. Хранится только в данных плагина этого хранилища",
+            aliases: ["unrealSpeechApiKey", "api key"],
+            control: { type: "text", key: "unrealSpeechApiKey", defaultValue: DEFAULT_SETTINGS.unrealSpeechApiKey, placeholder: "Вставьте ключ" },
+          },
+          {
+            name: "Голос Unreal Speech",
+            desc: "Scarlett, Dan, Liv, Will, Amy — английские голоса; русский текст может звучать с акцентом",
+            aliases: ["unrealSpeechVoiceId", "voice"],
+            control: {
+              type: "dropdown",
+              key: "unrealSpeechVoiceId",
+              defaultValue: String(DEFAULT_SETTINGS.unrealSpeechVoiceId),
+              options: UNREAL_SPEECH_VOICES.reduce<Record<string, string>>((acc, voice) => {
+                acc[voice] = voice;
+                return acc;
+              }, {}),
+            },
+          },
+          {
+            name: "Лимит Unreal Speech",
+            desc: "Сколько символов уже ушло в облако из этого хранилища и проверка ключа",
+            aliases: ["unrealSpeechCharsUsed", "limit"],
+            render: (setting) => {
+              const used = this.plugin.settings.unrealSpeechCharsUsed;
+              setting.descEl.createDiv({ text: `Отправлено символов: ${used.toLocaleString()}` });
+              setting.addButton((button) =>
+                button.setButtonText("Проверить ключ").onClick(() => {
+                  void this.plugin.testUnrealSpeech();
+                })
+              );
+              setting.addButton((button) =>
+                button.setButtonText("Сбросить счётчик").setDestructive().onClick(async () => {
+                  this.plugin.settings.unrealSpeechCharsUsed = 0;
+                  await this.plugin.saveSettings();
+                  this.update();
+                })
+              );
+            },
           },
           {
             name: "Включить озвучку (TTS)",

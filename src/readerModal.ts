@@ -22,6 +22,7 @@ import {
   stepIndex,
 } from "./speedEngine";
 import { detectSpeechLang, I18N, resolveLanguage } from "./i18n";
+import { synthesizeSpeech, splitForSpeech, UnrealSpeechError } from "./unrealSpeech";
 
 /** Flush the reading position to disk every N words. */
 const PROGRESS_SAVE_EVERY_WORDS = 25;
@@ -41,6 +42,11 @@ export class SpeedReaderModal extends Modal {
   private completed: boolean = false;
   private ttsEndIndex: number = -1;
   private timer: number | null = null;
+  /** Token that invalidates in-flight cloud speech when playback stops. */
+  private speechToken: number = 0;
+  private audioEl: HTMLAudioElement | null = null;
+  private speechObjectUrl: string | null = null;
+  private speechFallbackNoticeShown: boolean = false;
   private currentWpm: number;
   private settings: SpeedReaderSettings;
   private titleText: string;
@@ -534,14 +540,21 @@ export class SpeedReaderModal extends Modal {
   }
 
   private speakFromCurrentSentence(startIndex: number = this.currentIndex) {
-    if (!this.settings.enableTts || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (!this.settings.enableTts) return;
+
+    let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
+    while (end < this.words.length - 1 && !isSentenceEndWord(this.words[end].raw)) end++;
+    this.ttsEndIndex = end;
+    const text = this.words.slice(startIndex, end + 1).map((word) => word.raw).join(" ");
+
+    if (this.settings.ttsProvider === "unrealspeech" && this.settings.unrealSpeechApiKey.trim()) {
+      void this.speakWithUnrealSpeech(text);
+      return;
+    }
+
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
-      let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
-      while (end < this.words.length - 1 && !isSentenceEndWord(this.words[end].raw)) end++;
-      this.ttsEndIndex = end;
-      const slice = this.words.slice(startIndex, end + 1);
-      const text = slice.map((w) => w.raw).join(" ");
       if (!text.trim()) return;
 
       const utterance = new SpeechSynthesisUtterance(text);
@@ -553,7 +566,94 @@ export class SpeedReaderModal extends Modal {
     }
   }
 
+  /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
+  private async speakWithUnrealSpeech(text: string): Promise<void> {
+    const token = ++this.speechToken;
+    this.cancelAudio();
+    const chunks = splitForSpeech(text);
+    for (const chunk of chunks) {
+      if (token !== this.speechToken || !this.isPlaying) return;
+      try {
+        const audioBytes = await synthesizeSpeech(chunk, {
+          apiKey: this.settings.unrealSpeechApiKey,
+          voiceId: this.settings.unrealSpeechVoiceId,
+          wpm: this.currentWpm,
+        });
+        if (token !== this.speechToken || !this.isPlaying) return;
+        this.settings.unrealSpeechCharsUsed += chunk.length;
+        await this.playAudioBytes(audioBytes, token);
+      } catch (error) {
+        if (token !== this.speechToken) return;
+        this.reportSpeechError(error, text);
+        return;
+      }
+    }
+  }
+
+  /** Plays MP3 bytes and resolves when the chunk ends. */
+  private playAudioBytes(bytes: ArrayBuffer, token: number): Promise<void> {
+    if (typeof Audio === "undefined") return Promise.resolve();
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
+      this.speechObjectUrl = url;
+      const audio = new Audio(url);
+      this.audioEl = audio;
+      const finish = () => {
+        URL.revokeObjectURL(url);
+        if (this.speechObjectUrl === url) this.speechObjectUrl = null;
+        if (this.audioEl === audio) this.audioEl = null;
+        resolve();
+      };
+      audio.onended = finish;
+      audio.onerror = finish;
+      audio.play().catch(finish);
+      if (token !== this.speechToken) {
+        audio.pause();
+        finish();
+      }
+    });
+  }
+
+  private cancelAudio() {
+    if (this.audioEl) {
+      this.audioEl.pause();
+      this.audioEl = null;
+    }
+    if (this.speechObjectUrl) {
+      URL.revokeObjectURL(this.speechObjectUrl);
+      this.speechObjectUrl = null;
+    }
+  }
+
+  /** Reports quota/key problems once and falls back to the system voice. */
+  private reportSpeechError(error: unknown, text: string) {
+    const speechError = error instanceof UnrealSpeechError ? error : null;
+    const message = speechError ? speechError.message : "Unreal Speech недоступен.";
+    if (!this.speechFallbackNoticeShown) {
+      this.speechFallbackNoticeShown = true;
+      new Notice(
+        `⚠️ ${message}${this.canUseSystemSpeech() ? " Переключаюсь на системный голос." : ""}`,
+        9000
+      );
+    }
+    if (!this.canUseSystemSpeech()) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = detectSpeechLang(text);
+      utterance.rate = Math.max(0.7, Math.min(2.5, this.currentWpm / 190));
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      // Nothing else we can do.
+    }
+  }
+
+  private canUseSystemSpeech(): boolean {
+    return typeof window !== "undefined" && "speechSynthesis" in window;
+  }
+
   private stopTts() {
+    this.speechToken += 1;
+    this.cancelAudio();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();

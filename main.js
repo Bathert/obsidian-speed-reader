@@ -164,6 +164,169 @@ function findSentenceBounds(words, currentIndex) {
   return { start, end };
 }
 
+// src/unrealSpeech.ts
+var UNREAL_SPEECH_ENDPOINT = "https://api.v8.unrealspeech.com/stream";
+var MAX_CHARS_PER_REQUEST = 1e3;
+var MIN_REQUEST_INTERVAL_MS = 600;
+var UNREAL_SPEECH_VOICES = [
+  "Scarlett",
+  "Dan",
+  "Liv",
+  "Will",
+  "Amy",
+  "af_bella",
+  "af_sarah",
+  "af_nicole",
+  "af_sky",
+  "am_adam",
+  "am_michael",
+  "bf_emma",
+  "bf_isabella",
+  "bm_george",
+  "bm_lewis"
+];
+var UnrealSpeechError = class extends Error {
+  constructor(kind, message, status) {
+    super(message);
+    this.name = "UnrealSpeechError";
+    this.kind = kind;
+    this.status = status;
+  }
+};
+function splitForSpeech(text, max = MAX_CHARS_PER_REQUEST - 100) {
+  const limit = Math.max(50, Math.min(MAX_CHARS_PER_REQUEST, Math.trunc(max) || 1));
+  const source = text.replace(/\s+/g, " ").trim();
+  if (!source) return [];
+  const chunks = [];
+  let current = "";
+  const push = () => {
+    if (current.trim()) chunks.push(current.trim());
+    current = "";
+  };
+  const sentences = [];
+  let buffer = "";
+  for (const part of source.split(/([.!?…]+)/)) {
+    buffer += part;
+    if (/^[.!?…]+$/.test(part)) {
+      sentences.push(buffer.trim());
+      buffer = "";
+    }
+  }
+  if (buffer.trim()) sentences.push(buffer.trim());
+  for (const sentence of sentences) {
+    if (sentence.length > limit) {
+      for (const word of sentence.split(" ")) {
+        if (word.length > limit) {
+          for (let i = 0; i < word.length; i += limit) {
+            const piece = word.slice(i, i + limit);
+            if (current.length + piece.length + 1 > limit) push();
+            current += (current ? " " : "") + piece;
+          }
+          continue;
+        }
+        if (current.length + word.length + 1 > limit) push();
+        current += (current ? " " : "") + word;
+      }
+      continue;
+    }
+    if (current.length + sentence.length + 1 > limit) push();
+    current += (current ? " " : "") + sentence;
+  }
+  push();
+  return chunks;
+}
+function wpmToSpeechSpeed(wpm) {
+  const value = (Math.max(60, Math.min(1500, wpm)) - 200) / 450;
+  return String(Math.max(-1, Math.min(1, Math.round(value * 100) / 100)));
+}
+var nativeFetch = typeof window !== "undefined" && typeof window.fetch === "function" ? window.fetch.bind(window) : void 0;
+var RequestLimiter = class {
+  constructor(minIntervalMs = MIN_REQUEST_INTERVAL_MS) {
+    this.minIntervalMs = minIntervalMs;
+    this.nextAt = 0;
+    this.chain = Promise.resolve();
+  }
+  schedule(task) {
+    const run = this.chain.then(async () => {
+      const now = Date.now();
+      const wait = Math.max(0, this.nextAt - now);
+      if (wait > 0) await new Promise((resolve) => window.setTimeout(resolve, wait));
+      this.nextAt = Date.now() + this.minIntervalMs;
+      return task();
+    });
+    this.chain = run.then(
+      () => void 0,
+      () => void 0
+    );
+    return run;
+  }
+};
+var limiter = new RequestLimiter();
+function classify(status, detail) {
+  if (status === 401 || status === 403) {
+    return new UnrealSpeechError("auth", "\u041A\u043B\u044E\u0447 Unreal Speech \u043E\u0442\u043A\u043B\u043E\u043D\u0451\u043D (401/403). \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435 \u043A\u043B\u044E\u0447 \u0432 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430\u0445.", status);
+  }
+  if (status === 429) {
+    return new UnrealSpeechError("rate", "\u041B\u0438\u043C\u0438\u0442 \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 Unreal Speech (2 \u0437\u0430\u043F\u0440\u043E\u0441\u0430 \u0432 \u0441\u0435\u043A\u0443\u043D\u0434\u0443). \u041F\u0430\u0443\u0437\u0430 \u0438 \u043F\u043E\u0432\u0442\u043E\u0440.", status);
+  }
+  if (status === 402) {
+    return new UnrealSpeechError("quota", "\u0417\u0430\u043A\u043E\u043D\u0447\u0438\u043B\u0441\u044F \u043B\u0438\u043C\u0438\u0442 \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432 \u0442\u0430\u0440\u0438\u0444\u0430 Unreal Speech.", status);
+  }
+  return new UnrealSpeechError("server", `Unreal Speech \u043E\u0442\u0432\u0435\u0442\u0438\u043B ${status}${detail ? `: ${detail}` : ""}`, status);
+}
+async function synthesizeSpeech(text, options, fetchImpl) {
+  const payloadText = text.trim();
+  if (!payloadText) throw new UnrealSpeechError("empty", "\u041F\u0443\u0441\u0442\u043E\u0439 \u0442\u0435\u043A\u0441\u0442 \u0434\u043B\u044F \u043E\u0437\u0432\u0443\u0447\u043A\u0438.");
+  if (payloadText.length > MAX_CHARS_PER_REQUEST) {
+    throw new UnrealSpeechError("server", `\u0422\u0435\u043A\u0441\u0442 \u0434\u043B\u0438\u043D\u043D\u0435\u0435 ${MAX_CHARS_PER_REQUEST} \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432 \u2014 \u0435\u0433\u043E \u043D\u0443\u0436\u043D\u043E \u0440\u0430\u0437\u0431\u0438\u0442\u044C.`);
+  }
+  if (!options.apiKey.trim()) {
+    throw new UnrealSpeechError("auth", "\u041D\u0435 \u0437\u0430\u0434\u0430\u043D \u043A\u043B\u044E\u0447 Unreal Speech.");
+  }
+  const request = fetchImpl != null ? fetchImpl : nativeFetch;
+  if (!request) {
+    throw new UnrealSpeechError("network", "\u0412 \u044D\u0442\u043E\u043C \u043E\u043A\u0440\u0443\u0436\u0435\u043D\u0438\u0438 \u043D\u0435\u0442 fetch \u0434\u043B\u044F \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043A Unreal Speech.");
+  }
+  const response = await limiter.schedule(async () => {
+    var _a;
+    try {
+      return await request(UNREAL_SPEECH_ENDPOINT, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${options.apiKey.trim()}`
+        },
+        body: JSON.stringify({
+          Text: payloadText,
+          VoiceId: options.voiceId || "Scarlett",
+          Bitrate: options.bitrate || "192k",
+          Speed: wpmToSpeechSpeed((_a = options.wpm) != null ? _a : 300),
+          Pitch: "1",
+          Codec: "libmp3lame"
+        })
+      });
+    } catch (error) {
+      throw new UnrealSpeechError(
+        "network",
+        error instanceof Error ? `\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430: ${error.message}` : "\u0421\u0435\u0442\u044C \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430."
+      );
+    }
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      detail = (await response.text()).slice(0, 200);
+    } catch (e) {
+    }
+    throw classify(response.status, detail);
+  }
+  const buffer = await response.arrayBuffer();
+  if (buffer.byteLength === 0) {
+    throw new UnrealSpeechError("server", "Unreal Speech \u0432\u0435\u0440\u043D\u0443\u043B \u043F\u0443\u0441\u0442\u043E\u0439 \u0430\u0443\u0434\u0438\u043E\u043F\u043E\u0442\u043E\u043A.");
+  }
+  return buffer;
+}
+
 // src/settings.ts
 var DEFAULT_SETTINGS = {
   uiLanguage: "auto",
@@ -208,6 +371,10 @@ var DEFAULT_SETTINGS = {
   readCodeBlocks: false,
   // Feature 4: Audio / TTS
   enableTts: false,
+  ttsProvider: "system",
+  unrealSpeechApiKey: "",
+  unrealSpeechVoiceId: "Scarlett",
+  unrealSpeechCharsUsed: 0,
   // Top Feature 5
   stats: {
     totalWordsRead: 0,
@@ -249,6 +416,13 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
       value = value === "center" ? "center" : "spritz";
     } else if (key === "themeMode") {
       value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "unrealSpeechApiKey") {
+      value = typeof value === "string" ? value.trim() : "";
+    } else if (key === "ttsProvider") {
+      value = value === "unrealspeech" ? "unrealspeech" : "system";
+    } else if (key === "unrealSpeechVoiceId") {
+      const voice = typeof value === "string" ? value : "";
+      value = UNREAL_SPEECH_VOICES.includes(voice) ? voice : DEFAULT_SETTINGS.unrealSpeechVoiceId;
     } else if (key === "uiLanguage") {
       value = value === "ru" || value === "en" ? value : "auto";
     } else if (key === "stepWordCount") {
@@ -604,6 +778,61 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
             control: { type: "toggle", key: "showStatusBar", defaultValue: DEFAULT_SETTINGS.showStatusBar }
           },
           {
+            name: "\u0414\u0432\u0438\u0436\u043E\u043A \u043E\u0437\u0432\u0443\u0447\u043A\u0438",
+            desc: "\u0421\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 Web Speech API (\u043E\u0444\u043B\u0430\u0439\u043D, \u0433\u043E\u043B\u043E\u0441\u0430 \u041E\u0421) \u0438\u043B\u0438 Unreal Speech (\u043E\u0431\u043B\u0430\u043A\u043E, \u043D\u0443\u0436\u0435\u043D \u043A\u043B\u044E\u0447 \u0438 \u043B\u0438\u043C\u0438\u0442 \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432)",
+            aliases: ["ttsProvider", "tts", "unreal speech"],
+            control: {
+              type: "dropdown",
+              key: "ttsProvider",
+              defaultValue: String(DEFAULT_SETTINGS.ttsProvider),
+              options: {
+                system: "\u0421\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 (Web Speech)",
+                unrealspeech: "Unreal Speech (API-\u043A\u043B\u044E\u0447)"
+              }
+            }
+          },
+          {
+            name: "\u041A\u043B\u044E\u0447 Unreal Speech",
+            desc: "Bearer-\u043A\u043B\u044E\u0447 \u0438\u0437 unrealspeech.com/dashboard. \u0425\u0440\u0430\u043D\u0438\u0442\u0441\u044F \u0442\u043E\u043B\u044C\u043A\u043E \u0432 \u0434\u0430\u043D\u043D\u044B\u0445 \u043F\u043B\u0430\u0433\u0438\u043D\u0430 \u044D\u0442\u043E\u0433\u043E \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430",
+            aliases: ["unrealSpeechApiKey", "api key"],
+            control: { type: "text", key: "unrealSpeechApiKey", defaultValue: DEFAULT_SETTINGS.unrealSpeechApiKey, placeholder: "\u0412\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u043A\u043B\u044E\u0447" }
+          },
+          {
+            name: "\u0413\u043E\u043B\u043E\u0441 Unreal Speech",
+            desc: "Scarlett, Dan, Liv, Will, Amy \u2014 \u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0435 \u0433\u043E\u043B\u043E\u0441\u0430; \u0440\u0443\u0441\u0441\u043A\u0438\u0439 \u0442\u0435\u043A\u0441\u0442 \u043C\u043E\u0436\u0435\u0442 \u0437\u0432\u0443\u0447\u0430\u0442\u044C \u0441 \u0430\u043A\u0446\u0435\u043D\u0442\u043E\u043C",
+            aliases: ["unrealSpeechVoiceId", "voice"],
+            control: {
+              type: "dropdown",
+              key: "unrealSpeechVoiceId",
+              defaultValue: String(DEFAULT_SETTINGS.unrealSpeechVoiceId),
+              options: UNREAL_SPEECH_VOICES.reduce((acc, voice) => {
+                acc[voice] = voice;
+                return acc;
+              }, {})
+            }
+          },
+          {
+            name: "\u041B\u0438\u043C\u0438\u0442 Unreal Speech",
+            desc: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432 \u0443\u0436\u0435 \u0443\u0448\u043B\u043E \u0432 \u043E\u0431\u043B\u0430\u043A\u043E \u0438\u0437 \u044D\u0442\u043E\u0433\u043E \u0445\u0440\u0430\u043D\u0438\u043B\u0438\u0449\u0430 \u0438 \u043F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u043A\u043B\u044E\u0447\u0430",
+            aliases: ["unrealSpeechCharsUsed", "limit"],
+            render: (setting) => {
+              const used = this.plugin.settings.unrealSpeechCharsUsed;
+              setting.descEl.createDiv({ text: `\u041E\u0442\u043F\u0440\u0430\u0432\u043B\u0435\u043D\u043E \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432: ${used.toLocaleString()}` });
+              setting.addButton(
+                (button) => button.setButtonText("\u041F\u0440\u043E\u0432\u0435\u0440\u0438\u0442\u044C \u043A\u043B\u044E\u0447").onClick(() => {
+                  void this.plugin.testUnrealSpeech();
+                })
+              );
+              setting.addButton(
+                (button) => button.setButtonText("\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0441\u0447\u0451\u0442\u0447\u0438\u043A").setDestructive().onClick(async () => {
+                  this.plugin.settings.unrealSpeechCharsUsed = 0;
+                  await this.plugin.saveSettings();
+                  this.update();
+                })
+              );
+            }
+          },
+          {
             name: "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043E\u0437\u0432\u0443\u0447\u043A\u0443 (TTS)",
             desc: "\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u0438\u0442\u044C \u0447\u0438\u0442\u0430\u0435\u043C\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0433\u043E\u043B\u043E\u0441\u043E\u043C \u0432 \u0440\u0435\u0430\u043B\u044C\u043D\u043E\u043C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0447\u0435\u0440\u0435\u0437 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 \u0441\u0438\u043D\u0442\u0435\u0437\u0430\u0442\u043E\u0440 \u0440\u0435\u0447\u0438",
             aliases: ["enableTts"],
@@ -955,6 +1184,11 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.completed = false;
     this.ttsEndIndex = -1;
     this.timer = null;
+    /** Token that invalidates in-flight cloud speech when playback stops. */
+    this.speechToken = 0;
+    this.audioEl = null;
+    this.speechObjectUrl = null;
+    this.speechFallbackNoticeShown = false;
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
     this.sessionMaxWpm = 0;
@@ -1334,14 +1568,18 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     void this.plugin.saveSettings();
   }
   speakFromCurrentSentence(startIndex = this.currentIndex) {
-    if (!this.settings.enableTts || typeof window === "undefined" || !("speechSynthesis" in window)) return;
+    if (!this.settings.enableTts) return;
+    let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
+    while (end < this.words.length - 1 && !isSentenceEndWord(this.words[end].raw)) end++;
+    this.ttsEndIndex = end;
+    const text = this.words.slice(startIndex, end + 1).map((word) => word.raw).join(" ");
+    if (this.settings.ttsProvider === "unrealspeech" && this.settings.unrealSpeechApiKey.trim()) {
+      void this.speakWithUnrealSpeech(text);
+      return;
+    }
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
-      let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
-      while (end < this.words.length - 1 && !isSentenceEndWord(this.words[end].raw)) end++;
-      this.ttsEndIndex = end;
-      const slice = this.words.slice(startIndex, end + 1);
-      const text = slice.map((w) => w.raw).join(" ");
       if (!text.trim()) return;
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = detectSpeechLang(text);
@@ -1350,7 +1588,88 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     } catch (e) {
     }
   }
+  /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
+  async speakWithUnrealSpeech(text) {
+    const token = ++this.speechToken;
+    this.cancelAudio();
+    const chunks = splitForSpeech(text);
+    for (const chunk of chunks) {
+      if (token !== this.speechToken || !this.isPlaying) return;
+      try {
+        const audioBytes = await synthesizeSpeech(chunk, {
+          apiKey: this.settings.unrealSpeechApiKey,
+          voiceId: this.settings.unrealSpeechVoiceId,
+          wpm: this.currentWpm
+        });
+        if (token !== this.speechToken || !this.isPlaying) return;
+        this.settings.unrealSpeechCharsUsed += chunk.length;
+        await this.playAudioBytes(audioBytes, token);
+      } catch (error) {
+        if (token !== this.speechToken) return;
+        this.reportSpeechError(error, text);
+        return;
+      }
+    }
+  }
+  /** Plays MP3 bytes and resolves when the chunk ends. */
+  playAudioBytes(bytes, token) {
+    if (typeof Audio === "undefined") return Promise.resolve();
+    return new Promise((resolve) => {
+      const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
+      this.speechObjectUrl = url;
+      const audio = new Audio(url);
+      this.audioEl = audio;
+      const finish = () => {
+        URL.revokeObjectURL(url);
+        if (this.speechObjectUrl === url) this.speechObjectUrl = null;
+        if (this.audioEl === audio) this.audioEl = null;
+        resolve();
+      };
+      audio.onended = finish;
+      audio.onerror = finish;
+      audio.play().catch(finish);
+      if (token !== this.speechToken) {
+        audio.pause();
+        finish();
+      }
+    });
+  }
+  cancelAudio() {
+    if (this.audioEl) {
+      this.audioEl.pause();
+      this.audioEl = null;
+    }
+    if (this.speechObjectUrl) {
+      URL.revokeObjectURL(this.speechObjectUrl);
+      this.speechObjectUrl = null;
+    }
+  }
+  /** Reports quota/key problems once and falls back to the system voice. */
+  reportSpeechError(error, text) {
+    const speechError = error instanceof UnrealSpeechError ? error : null;
+    const message = speechError ? speechError.message : "Unreal Speech \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D.";
+    if (!this.speechFallbackNoticeShown) {
+      this.speechFallbackNoticeShown = true;
+      new import_obsidian2.Notice(
+        `\u26A0\uFE0F ${message}${this.canUseSystemSpeech() ? " \u041F\u0435\u0440\u0435\u043A\u043B\u044E\u0447\u0430\u044E\u0441\u044C \u043D\u0430 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 \u0433\u043E\u043B\u043E\u0441." : ""}`,
+        9e3
+      );
+    }
+    if (!this.canUseSystemSpeech()) return;
+    try {
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = detectSpeechLang(text);
+      utterance.rate = Math.max(0.7, Math.min(2.5, this.currentWpm / 190));
+      window.speechSynthesis.speak(utterance);
+    } catch (e) {
+    }
+  }
+  canUseSystemSpeech() {
+    return typeof window !== "undefined" && "speechSynthesis" in window;
+  }
   stopTts() {
+    this.speechToken += 1;
+    this.cancelAudio();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
         window.speechSynthesis.cancel();
@@ -1818,6 +2137,13 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     );
     this.addSettingTab(new SpeedReaderSettingTab(this.app, this));
     this.addCommand({
+      id: "speed-reader-test-tts",
+      name: "Test speech key",
+      callback: () => {
+        void this.testUnrealSpeech();
+      }
+    });
+    this.addCommand({
       id: "speed-reader-self-check",
       name: "Run self-check",
       callback: () => {
@@ -2042,6 +2368,26 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       readCodeBlocks: this.settings.readCodeBlocks,
       orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
     };
+  }
+  /** Verifies the Unreal Speech key with a one-word request. */
+  async testUnrealSpeech() {
+    if (!this.settings.unrealSpeechApiKey.trim()) {
+      new import_obsidian3.Notice("\u041D\u0435 \u0437\u0430\u0434\u0430\u043D \u043A\u043B\u044E\u0447 \u043E\u0437\u0432\u0443\u0447\u043A\u0438. \u0412\u0441\u0442\u0430\u0432\u044C\u0442\u0435 \u0435\u0433\u043E \u0432 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430\u0445 \u043F\u043B\u0430\u0433\u0438\u043D\u0430.");
+      return;
+    }
+    try {
+      const audio = await synthesizeSpeech("\u041F\u0440\u043E\u0432\u0435\u0440\u043A\u0430 \u0433\u043E\u043B\u043E\u0441\u0430.", {
+        apiKey: this.settings.unrealSpeechApiKey,
+        voiceId: this.settings.unrealSpeechVoiceId,
+        wpm: 300
+      });
+      this.settings.unrealSpeechCharsUsed += 20;
+      await this.saveSettings();
+      new import_obsidian3.Notice(`\u2705 \u041A\u043B\u044E\u0447 Unreal Speech \u0440\u0430\u0431\u043E\u0442\u0430\u0435\u0442, \u043F\u043E\u043B\u0443\u0447\u0435\u043D\u043E ${audio.byteLength} \u0431\u0430\u0439\u0442 \u0430\u0443\u0434\u0438\u043E.`, 8e3);
+    } catch (error) {
+      const message = error instanceof UnrealSpeechError ? error.message : String(error);
+      new import_obsidian3.Notice(`\u274C \u041E\u0448\u0438\u0431\u043A\u0430 Unreal Speech: ${message}`, 12e3);
+    }
   }
   /** Updates the status bar reading estimate for the active note. */
   updateStatusBar() {

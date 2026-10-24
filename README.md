@@ -33,8 +33,11 @@ Russian version: [README.ru.md](README.ru.md)
 
 ### Speech
 
-- The speaker button and the `M` key toggle text-to-speech through the platform Web Speech API, at a rate proportional to the chosen WPM.
-- Speech uses installed system voices, is approximate rather than word-synchronized, and may use online services depending on your system settings. Check those settings before reading sensitive notes.
+- The speaker button and the `M` key toggle text-to-speech at a rate proportional to the chosen WPM.
+- Two engines are available in settings: the system **Web Speech** API (offline voices) and **Unreal Speech** (cloud, needs an API key from unrealspeech.com/dashboard).
+- Unreal Speech requests are split into chunks of at most 1000 characters and serialised to stay inside the free plan's 2 requests/second. The plugin counts the characters it sends, shows the counter in settings, and has a "Test key" button.
+- If the cloud call fails (bad key, quota, rate limit, network), the reader reports the reason once and falls back to the system voice.
+- The key is stored only in this vault's plugin data (`data.json`) and never in the repository.
 
 ### Progress, cursor, and statistics
 

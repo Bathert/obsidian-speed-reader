@@ -304,3 +304,18 @@ test('restart clears the trainer acceleration interval', () => {
   assert.equal(h.modal.currentWpm, 310, 'no early step right after restart');
   assert.equal(h.modal.wordsSinceAcceleration, 1);
 });
+
+test('cloud speech falls back to the system voice when the request fails', async () => {
+  const h = readerHarness('Первое предложение для озвучки.', {
+    enableTts: true,
+    ttsProvider: 'unrealspeech',
+    unrealSpeechApiKey: 'test-key',
+    unrealSpeechVoiceId: 'Scarlett',
+    unrealSpeechCharsUsed: 0,
+  });
+  h.modal.togglePlay();
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(h.spoken.length, 1, 'system voice speaks after the cloud error');
+  assert.ok(h.notices.some(message => message.includes('Unreal Speech')), 'a notice explains the fallback');
+  assert.equal(h.settings.unrealSpeechCharsUsed, 0, 'failed requests are not billed locally');
+});
