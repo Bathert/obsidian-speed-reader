@@ -47,6 +47,8 @@ export class SpeedReaderModal extends Modal {
   private audioEl: HTMLAudioElement | null = null;
   private speechObjectUrl: string | null = null;
   private speechFallbackNoticeShown: boolean = false;
+  /** True while a cloud sentence is being fetched or played. */
+  private speechBusy: boolean = false;
   private currentWpm: number;
   private settings: SpeedReaderSettings;
   private titleText: string;
@@ -568,26 +570,33 @@ export class SpeedReaderModal extends Modal {
 
   /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
   private async speakWithUnrealSpeech(text: string): Promise<void> {
-    const token = ++this.speechToken;
-    this.cancelAudio();
+    // One sentence at a time: a new sentence must not cut off the audio that is
+    // still being fetched or played.
+    if (this.speechBusy) return;
+    const token = this.speechToken;
+    this.speechBusy = true;
     const chunks = splitForSpeech(text);
-    for (const chunk of chunks) {
-      if (token !== this.speechToken || !this.isPlaying) return;
-      try {
-        const audioBytes = await synthesizeSpeech(chunk, {
-          apiKey: this.settings.unrealSpeechApiKey,
-          voiceId: this.settings.unrealSpeechVoiceId,
-          wpm: this.currentWpm,
-        });
-        // The request is billed even if playback stopped meanwhile.
-        this.settings.unrealSpeechCharsUsed += chunk.length;
+    try {
+      for (const chunk of chunks) {
         if (token !== this.speechToken || !this.isPlaying) return;
-        await this.playAudioBytes(audioBytes, token);
-      } catch (error) {
-        if (token !== this.speechToken) return;
-        this.reportSpeechError(error, text);
-        return;
+        try {
+          const audioBytes = await synthesizeSpeech(chunk, {
+            apiKey: this.settings.unrealSpeechApiKey,
+            voiceId: this.settings.unrealSpeechVoiceId,
+            wpm: this.currentWpm,
+          });
+          // The request is billed even if playback stopped meanwhile.
+          this.settings.unrealSpeechCharsUsed += chunk.length;
+          if (token !== this.speechToken || !this.isPlaying) return;
+          await this.playAudioBytes(audioBytes, token);
+        } catch (error) {
+          if (token !== this.speechToken) return;
+          this.reportSpeechError(error, text);
+          return;
+        }
       }
+    } finally {
+      this.speechBusy = false;
     }
   }
 

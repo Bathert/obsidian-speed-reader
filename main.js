@@ -1234,6 +1234,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.audioEl = null;
     this.speechObjectUrl = null;
     this.speechFallbackNoticeShown = false;
+    /** True while a cloud sentence is being fetched or played. */
+    this.speechBusy = false;
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
     this.sessionMaxWpm = 0;
@@ -1635,25 +1637,30 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
   async speakWithUnrealSpeech(text) {
-    const token = ++this.speechToken;
-    this.cancelAudio();
+    if (this.speechBusy) return;
+    const token = this.speechToken;
+    this.speechBusy = true;
     const chunks = splitForSpeech(text);
-    for (const chunk of chunks) {
-      if (token !== this.speechToken || !this.isPlaying) return;
-      try {
-        const audioBytes = await synthesizeSpeech(chunk, {
-          apiKey: this.settings.unrealSpeechApiKey,
-          voiceId: this.settings.unrealSpeechVoiceId,
-          wpm: this.currentWpm
-        });
-        this.settings.unrealSpeechCharsUsed += chunk.length;
+    try {
+      for (const chunk of chunks) {
         if (token !== this.speechToken || !this.isPlaying) return;
-        await this.playAudioBytes(audioBytes, token);
-      } catch (error) {
-        if (token !== this.speechToken) return;
-        this.reportSpeechError(error, text);
-        return;
+        try {
+          const audioBytes = await synthesizeSpeech(chunk, {
+            apiKey: this.settings.unrealSpeechApiKey,
+            voiceId: this.settings.unrealSpeechVoiceId,
+            wpm: this.currentWpm
+          });
+          this.settings.unrealSpeechCharsUsed += chunk.length;
+          if (token !== this.speechToken || !this.isPlaying) return;
+          await this.playAudioBytes(audioBytes, token);
+        } catch (error) {
+          if (token !== this.speechToken) return;
+          this.reportSpeechError(error, text);
+          return;
+        }
       }
+    } finally {
+      this.speechBusy = false;
     }
   }
   /** Plays MP3 bytes and resolves when the chunk ends. */
