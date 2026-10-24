@@ -226,6 +226,126 @@ describe("textParser - Feature 2: groupIntoChunks", () => {
   });
 });
 
+describe("textParser - edge audit", () => {
+  const options = { pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4, spritzVariableTiming: false };
+
+  it("returns no words for empty, whitespace, hidden-only or punctuation-only input", () => {
+    for (const input of ["", " \t\r\n", "---\ntitle: hidden\n---", "```ts\nhidden\n```", "![[hidden.png]]", "… !!! —"]) {
+      assert.deepStrictEqual(parseWords(input, options), [], JSON.stringify(input));
+    }
+  });
+
+  it("preserves exact offsets through nested formatting, inline code and HTML", () => {
+    const source = "  **кот** `кот` <b>кот</b> с**ло**во кот";
+    const words = parseWords(source, options);
+    assert.deepStrictEqual(words.map((w) => w.raw), ["кот", "кот", "кот", "слово", "кот"]);
+    assert.deepStrictEqual(words.map((w) => w.charOffset), [source.indexOf("кот"), source.indexOf("`кот") + 1, source.indexOf(">кот") + 1, source.indexOf("с**"), source.lastIndexOf("кот")]);
+  });
+
+  it("keeps ORP segments lossless for empty and punctuation-only tokens at width boundaries", () => {
+    assert.strictEqual(getOrpIndex(""), 0);
+    assert.strictEqual(getOrpIndex("!!!"), 1);
+    for (const token of ["", "!!!", "«я»", "(reader),", "слово", "12345"]) {
+      for (const width of [-10, 0, 1, 1.5, 2, 3, 100, Infinity, -Infinity]) {
+        const parts = splitWordForOrp(token, width);
+        assert.strictEqual(parts.prefix + parts.focusChar + parts.suffix, token);
+        assert.ok(parts.focusChar.length <= 3);
+        if (token) assert.ok(parts.focusChar.length > 0);
+      }
+    }
+  });
+
+  it("marks paragraph ends with CRLF and leaves the last word unmarked", () => {
+    const words = parseWords("one\r\n\r\ntwo\r\nthree", { ...options, pauseOnParagraphs: true });
+    assert.deepStrictEqual(words.map((w) => w.isParagraphEnd), [true, false, false]);
+    assert.deepStrictEqual(words.map((w) => w.delayMultiplier), [2.5, 1, 1]);
+  });
+
+  it("disables punctuation, number and paragraph pauses without disabling variable length timing", () => {
+    const words = parseWords("in, NASA.\n\n123 incomprehensible!", { ...options, pauseOnPunctuation: false, pauseOnNumbersAndAcronyms: true, pauseOnParagraphs: true, spritzVariableTiming: true });
+    assert.deepStrictEqual(words.map((w) => w.delayMultiplier), [0.8, 1, 1, 1.35]);
+  });
+
+  it("tests each variable-length threshold and combined punctuation rounding", () => {
+    const words = parseWords("a aa aaa aaaaaaaa aaaaaaaaa aaaaaaaaaaaa aaaaaaaaaaaaa aaaaaaaaa,", { ...options, spritzVariableTiming: true });
+    assert.deepStrictEqual(words.map((w) => w.delayMultiplier), [0.8, 0.8, 1, 1, 1.15, 1.15, 1.35, 1.61]);
+  });
+
+  it("keeps chunk references and maximum timing including an incomplete final chunk", () => {
+    const words = parseWords("one two! three four five", options);
+    for (const size of [1, 2, 3, 99]) {
+      const chunks = groupIntoChunks(words, size);
+      assert.deepStrictEqual(chunks.flatMap((chunk) => chunk.words), words);
+      assert.strictEqual(chunks[0].words[0], words[0]);
+      for (const chunk of chunks) assert.strictEqual(chunk.delayMultiplier, Math.max(...chunk.words.map((word) => word.delayMultiplier)));
+    }
+    assert.deepStrictEqual(groupIntoChunks([], 3), []);
+  });
+
+  it("maps book-sized repeated text without argument-limit failures", () => {
+    const paragraph = "**Батюшка** мой Андрей Петрович Гринев.\n\n";
+    const source = paragraph.repeat(5000);
+    const words = parseWords(source, options);
+    assert.strictEqual(words.length, 25000);
+    assert.strictEqual(words[0].charOffset, 2);
+    assert.strictEqual(words.at(-1)!.charOffset, source.lastIndexOf("Гринев"));
+    assert.strictEqual(words.at(-1)!.raw, "Гринев.");
+    assert.strictEqual(words.at(-1)!.isParagraphEnd, false);
+  });
+
+  it("reads a public-domain book excerpt without dropping words or losing source offsets", () => {
+    // А. С. Пушкин, «Капитанская дочка», начало главы I.
+    const source = "# Капитанская дочка\n\nБатюшка мой Андрей Петрович Гринев в молодости своей служил при графе Минихе и вышел в отставку премьер-майором в 17.. году.\n\nС тех пор жил он в своей Симбирской деревне, где и женился на девице Авдотье Васильевне Ю., дочери бедного тамошнего дворянина.";
+    const expected = "Капитанская дочка Батюшка мой Андрей Петрович Гринев в молодости своей служил при графе Минихе и вышел в отставку премьер-майором в 17.. году. С тех пор жил он в своей Симбирской деревне, где и женился на девице Авдотье Васильевне Ю., дочери бедного тамошнего дворянина.".split(" ");
+    const words = parseWords(source, { ...options, pauseOnParagraphs: true, spritzVariableTiming: true });
+    assert.deepStrictEqual(words.map((word) => word.raw), expected);
+    for (let index = 0; index < words.length; index++) {
+      const word = words[index];
+      const core = word.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+      assert.strictEqual(source.slice(word.charOffset!, word.charOffset! + core.length), core);
+      assert.strictEqual(word.prefix + word.focusChar + word.suffix, word.raw);
+      if (index > 0) assert.ok(word.charOffset! > words[index - 1].charOffset!);
+    }
+    assert.deepStrictEqual(groupIntoChunks(words, 3).flatMap((chunk) => chunk.words), words);
+    assert.strictEqual(words.at(-1)!.isParagraphEnd, false);
+  });
+});
+
+describe("textParser - ORP width regressions", () => {
+  it("falls back to one focused character for NaN width without corrupting the token", () => {
+    const parts = splitWordForOrp("слово,", NaN);
+    assert.deepStrictEqual(parts, splitWordForOrp("слово,", 1));
+    assert.strictEqual(parts.prefix + parts.focusChar + parts.suffix, "слово,");
+  });
+});
+
+describe("textParser - chunk size regressions", () => {
+  it("normalizes non-integer and non-finite chunk sizes without losing words", () => {
+    const words = parseWords("one two three four five", { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 });
+    for (const size of [NaN, Infinity, 1.5, 2.5, 0, -1]) {
+      const chunks = groupIntoChunks(words, size);
+      assert.deepStrictEqual(chunks.flatMap((chunk) => chunk.words), words, `size ${size}`);
+      assert.ok(chunks.every((chunk) => chunk.words.length > 0));
+    }
+  });
+});
+
+describe("textParser - punctuation regressions", () => {
+  it("recognizes sentence and comma pauses through Russian and curly closing quotes", () => {
+    const words = parseWords("«Готово!» “Дальше,” Конец.", { pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4, spritzVariableTiming: false });
+    assert.deepStrictEqual(words.map((w) => w.delayMultiplier), [2, 1.4, 2]);
+  });
+});
+
+describe("textParser - source offset regressions", () => {
+  it("maps repeated visible words past hidden metadata, code, URLs and wiki targets", () => {
+    const source = "---\ntitle: echo\n---\n```\necho\n```\n![echo](echo.png) [[echo|echo]] [echo](echo) echo";
+    const words = parseWords(source, { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 });
+    assert.deepStrictEqual(words.map((w) => w.raw), ["echo", "echo", "echo"]);
+    assert.deepStrictEqual(words.map((w) => w.charOffset), [source.indexOf("|echo") + 1, source.indexOf("[echo](echo)") + 1, source.lastIndexOf("echo")]);
+  });
+});
+
 describe("textParser - charOffset (cursor sync)", () => {
   const options = {
     pauseOnPunctuation: true,

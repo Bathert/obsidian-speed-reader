@@ -19,7 +19,7 @@ export function stepIndex(currentIndex: number, delta: number, totalWords: numbe
 
 export function calculateProgressPercent(currentIndex: number, totalWords: number): number {
   if (totalWords <= 0) return 0;
-  return Math.round(((currentIndex + 1) / totalWords) * 100);
+  return Math.max(0, Math.min(100, Math.round(((currentIndex + 1) / totalWords) * 100)));
 }
 
 export function formatTimeRemaining(remainingWords: number, wpm: number): string {
@@ -47,7 +47,7 @@ export function calculateRampUpWpm(
   if (rampUpWords <= 0 || wordsReadInSession >= rampUpWords) {
     return targetWpm;
   }
-  const factor = 0.65 + 0.35 * (wordsReadInSession / rampUpWords);
+  const factor = 0.65 + 0.35 * (Math.max(0, wordsReadInSession) / rampUpWords);
   return Math.round(targetWpm * factor);
 }
 
@@ -58,16 +58,17 @@ export function findPreviousSentenceStart(
   words: { raw: string }[],
   currentIndex: number
 ): number {
+  currentIndex = clampIndex(currentIndex, words.length);
   if (currentIndex <= 0 || words.length === 0) return 0;
 
   // If already at the first word of a sentence, skip back into the previous sentence
   let searchStart = currentIndex - 1;
-  if (searchStart >= 0 && /[.!?…]+["')\]}]*$/.test(words[searchStart].raw)) {
+  if (searchStart >= 0 && /[.!?…]+["'»”’）)\]}]*$/.test(words[searchStart].raw)) {
     searchStart--;
   }
 
   for (let i = searchStart; i >= 0; i--) {
-    if (/[.!?…]+["')\]}]*$/.test(words[i].raw)) {
+    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
       return i + 1;
     }
   }
@@ -81,10 +82,12 @@ export function findNextSentenceStart(
   words: { raw: string }[],
   currentIndex: number
 ): number {
-  if (currentIndex >= words.length - 1 || words.length === 0) return words.length - 1;
+  currentIndex = clampIndex(currentIndex, words.length);
+  if (words.length === 0) return 0;
+  if (currentIndex >= words.length - 1) return words.length - 1;
 
   for (let i = currentIndex; i < words.length - 1; i++) {
-    if (/[.!?…]+["')\]}]*$/.test(words[i].raw)) {
+    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
       return i + 1;
     }
   }
@@ -97,7 +100,7 @@ export function findNextSentenceStart(
 export function calculateTimeSavedMinutes(totalWords: number, totalSecondsSpent: number): number {
   if (totalWords <= 0) return 0;
   const standardMinutes = totalWords / 200;
-  const actualMinutes = totalSecondsSpent / 60;
+  const actualMinutes = Math.max(0, totalSecondsSpent) / 60;
   return Math.max(0, Math.round((standardMinutes - actualMinutes) * 10) / 10);
 }
 

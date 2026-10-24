@@ -10,7 +10,7 @@ export default class SpeedReaderPlugin extends Plugin {
     await this.loadSettings();
 
     // Ribbon icon on the left sidebar
-    this.addRibbonIcon("book-open", "Speed Read Note", () => {
+    this.addRibbonIcon("book-open", "Speed read note", () => {
       this.speedReadActiveView();
     });
 
@@ -37,7 +37,7 @@ export default class SpeedReaderPlugin extends Plugin {
       editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const selection = editor.getSelection();
         if (!selection || !selection.trim()) {
-          new Notice("Speed Reader: No text selected.");
+          new Notice("Speed reader: No text selected.");
           return;
         }
         new SpeedReaderModal(
@@ -57,7 +57,7 @@ export default class SpeedReaderPlugin extends Plugin {
       editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
         const content = editor.getValue();
         if (!content || !content.trim()) {
-          new Notice("Speed Reader: Active note is empty.");
+          new Notice("Speed reader: Active note is empty.");
           return;
         }
         const noteKey = view.file?.path || view.file?.basename || "Active Note";
@@ -120,7 +120,7 @@ export default class SpeedReaderPlugin extends Plugin {
   private speedReadActiveView() {
     const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
     if (!activeView) {
-      new Notice("Speed Reader: No active Markdown note found.");
+      new Notice("Speed reader: No active Markdown note found.");
       return;
     }
 
@@ -137,7 +137,7 @@ export default class SpeedReaderPlugin extends Plugin {
     } else {
       const content = editor.getValue();
       if (!content || !content.trim()) {
-        new Notice("Speed Reader: Active note is empty.");
+        new Notice("Speed reader: Active note is empty.");
         return;
       }
       const noteKey = activeView.file?.path || activeView.file?.basename || "Active Note";
@@ -179,13 +179,16 @@ export default class SpeedReaderPlugin extends Plugin {
   }
 
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    if (!this.settings.stats) {
-      this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats);
+    const data: unknown = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data as Partial<SpeedReaderSettings> | null);
+    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, this.settings.stats);
+    for (const key of Object.keys(DEFAULT_SETTINGS.stats) as (keyof SpeedReaderSettings["stats"])[]) {
+      const value = this.settings.stats[key];
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        this.settings.stats[key] = DEFAULT_SETTINGS.stats[key];
+      }
     }
-    if (!this.settings.noteProgress) {
-      this.settings.noteProgress = {};
-    }
+    this.settings.noteProgress = { ...this.settings.noteProgress };
   }
 
   async saveSettings() {

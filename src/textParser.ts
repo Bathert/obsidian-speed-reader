@@ -24,52 +24,84 @@ export interface ParseOptions {
  * Strips markdown syntax to extract readable words for RSVP.
  */
 export function cleanMarkdown(text: string): string {
+  return cleanMarkdownWithOffsets(text).text;
+}
+
+/** Keep source positions through exactly the same transformations as visible text. */
+function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number[] } {
   let cleaned = text;
+  let offsets = Array.from({ length: text.length }, (_, index) => index);
+  const replace = (pattern: RegExp, replacement: string): void => {
+    const nextOffsets: number[] = [];
+    const appendOffsets = (start: number, end: number): void => {
+      for (let index = start; index < end; index++) nextOffsets.push(offsets[index]);
+    };
+    let end = 0;
+    cleaned = cleaned.replace(pattern, (...args: unknown[]) => {
+      const match = args[0] as string;
+      const start = args[args.length - 2] as number;
+      appendOffsets(end, start);
+      end = start + match.length;
+      if (!replacement) return "";
+      const group = Number(replacement.slice(1));
+      // Re-execute on this match to obtain the retained group's exact position,
+      // even when hidden link targets contain the same text as their label.
+      const localPattern = new RegExp(pattern.source, pattern.flags.replace("g", "") + "d");
+      const localMatch = localPattern.exec(match) as (RegExpExecArray & { indices: [number, number][] }) | null;
+      const range = localMatch!.indices[group];
+      appendOffsets(start + range[0], start + range[1]);
+      return args[group] as string;
+    });
+    appendOffsets(end, offsets.length);
+    offsets = nextOffsets;
+  };
 
   // Remove YAML frontmatter
-  cleaned = cleaned.replace(/^---[\s\S]*?---\s*/, "");
+  replace(/^---[\s\S]*?---\s*/, "");
 
   // Remove code blocks
-  cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
+  replace(/```[\s\S]*?```/g, "");
 
   // Remove inline code
-  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
+  replace(/`([^`]+)`/g, "$1");
 
   // Remove images ![[image]] or ![alt](url)
-  cleaned = cleaned.replace(/!\[\[.*?\]\]/g, "");
-  cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, "");
+  replace(/!\[\[.*?\]\]/g, "");
+  replace(/!\[.*?\]\(.*?\)/g, "");
 
   // Replace Obsidian links [[page|alias]] -> alias, [[page]] -> page
-  cleaned = cleaned.replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
+  replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
 
   // Replace Markdown links [text](url) -> text
-  cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 
   // Remove HTML tags
-  cleaned = cleaned.replace(/<[^>]+>/g, "");
+  replace(/<[^>]+>/g, "");
 
   // Remove header hashes (#, ##, etc.) but keep title words
-  cleaned = cleaned.replace(/^#{1,6}\s+/gm, "");
+  replace(/^#{1,6}\s+/gm, "");
 
   // Remove bold, italic, strikethrough: **, *, __, _, ~~
-  cleaned = cleaned.replace(/(\*\*|__)(.*?)\1/g, "$2");
-  cleaned = cleaned.replace(/(\*|_)(.*?)\1/g, "$2");
-  cleaned = cleaned.replace(/~~(.*?)~~/g, "$1");
+  replace(/(\*\*|__)(.*?)\1/g, "$2");
+  replace(/(\*|_)(.*?)\1/g, "$2");
+  replace(/~~(.*?)~~/g, "$1");
 
   // Remove blockquotes (>)
-  cleaned = cleaned.replace(/^\s*>\s*/gm, "");
+  replace(/^\s*>\s*/gm, "");
 
   // Remove task list checkboxes like - [ ] or - [x]
-  cleaned = cleaned.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
+  replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
 
   // Remove list bullets: -, *, +, 1.
-  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
-  cleaned = cleaned.replace(/^\s*\d+\.\s+/gm, "");
+  replace(/^\s*[-*+]\s+/gm, "");
+  replace(/^\s*\d+\.\s+/gm, "");
 
   // Remove horizontal rules
-  cleaned = cleaned.replace(/^\s*[-*_]{3,}\s*$/gm, "");
+  replace(/^\s*[-*_]{3,}\s*$/gm, "");
 
-  return cleaned.trim();
+  const start = cleaned.match(/^\s*/)![0].length;
+  const trimmed = cleaned.trim();
+  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length) };
 }
 
 /**
@@ -113,7 +145,7 @@ export function splitWordForOrp(
   width: number = 1
 ): { prefix: string; focusChar: string; suffix: string } {
   const match = token.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
-  const safeWidth = Math.max(1, Math.min(3, Math.round(width)));
+  const safeWidth = Number.isNaN(width) ? 1 : Math.max(1, Math.min(3, Math.round(width)));
 
   if (!match) {
     const start = Math.floor(token.length / 2);
@@ -126,7 +158,7 @@ export function splitWordForOrp(
 
   const prefixPunct = match[1];
   const coreWord = match[2];
-  const suffixPunct = match[3];
+
   const orp = getOrpIndex(token);
   const coreEnd = prefixPunct.length + coreWord.length;
   const zoneEnd = Math.min(orp + safeWidth, coreEnd);
@@ -143,17 +175,14 @@ export function splitWordForOrp(
  * paragraph boundary awareness, and Spritz variable pacing.
  */
 export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
-  const cleaned = cleanMarkdown(text);
+  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text);
   if (!cleaned.trim()) return [];
 
   // Split into paragraphs by double newlines
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result: ParsedWord[] = [];
 
-  // Sequential search cursor into the ORIGINAL text. Markdown is stripped in
-  // `cleaned`, so we re-locate every core word in the source in reading order.
-  // A moving cursor (instead of indexOf from 0) keeps repeated words like "и"
-  // pointing at their own occurrence rather than the first one in the note.
+  // Search visible text only; retained character positions map back to source.
   let searchFrom = 0;
 
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
@@ -190,6 +219,17 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
         } else if (coreWord.length >= 9) {
           lengthMultiplier = 1.15; // Moderately long words
         }
+
+        // Long hyphenated compounds (often unfamiliar names) need time to
+        // recognize each part. Ignore short forms like «кто-то» and em dashes.
+        const compoundParts = coreWord.split(/[-\u2010\u2011]/u);
+        if (
+          compoundParts.length > 1 &&
+          compoundParts.every((part) => /^\p{L}+$/u.test(part)) &&
+          compoundParts.join("").length >= 9
+        ) {
+          lengthMultiplier = Math.max(lengthMultiplier, 2);
+        }
       }
 
       let punctMultiplier = 1.0;
@@ -197,9 +237,9 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = options.paragraphPauseMultiplier ?? 2.5;
-        } else if (/[.!?…]+["')\]}]*$/.test(token)) {
+        } else if (/[.!?…]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
-        } else if (/[,;:—–-]+["')\]}]*$/.test(token)) {
+        } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
         } else if (
           options.pauseOnNumbersAndAcronyms &&
@@ -212,13 +252,12 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       // Final delay is length multiplier combined with punctuation multiplier
       const delayMultiplier = Math.round(lengthMultiplier * punctMultiplier * 100) / 100;
 
-      // Locate the core word in the original note, moving forward only, so the
-      // offset always belongs to the occurrence currently being read.
+      // Locate the first visible letter, including words spanning markup.
       let charOffset: number | undefined;
       if (coreWord.length > 0) {
-        const found = text.indexOf(coreWord, searchFrom);
+        const found = cleaned.indexOf(coreWord, searchFrom);
         if (found !== -1) {
-          charOffset = found;
+          charOffset = offsets[found];
           searchFrom = found + coreWord.length;
         }
       }
@@ -248,6 +287,7 @@ export interface WordChunk {
  * Groups parsed words into multi-word chunks (chunking mode: 1, 2, or 3 words).
  */
 export function groupIntoChunks(words: ParsedWord[], chunkSize: number): WordChunk[] {
+  chunkSize = Number.isFinite(chunkSize) ? Math.max(1, Math.floor(chunkSize)) : 1;
   if (chunkSize <= 1) {
     return words.map((w) => ({
       raw: w.raw,

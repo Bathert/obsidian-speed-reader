@@ -47,7 +47,7 @@ function stepIndex(currentIndex, delta, totalWords) {
 }
 function calculateProgressPercent(currentIndex, totalWords) {
   if (totalWords <= 0) return 0;
-  return Math.round((currentIndex + 1) / totalWords * 100);
+  return Math.max(0, Math.min(100, Math.round((currentIndex + 1) / totalWords * 100)));
 }
 function formatTimeRemaining(remainingWords, wpm) {
   if (remainingWords <= 0) return "0s left";
@@ -64,26 +64,29 @@ function calculateRampUpWpm(targetWpm, wordsReadInSession, rampUpWords = 15) {
   if (rampUpWords <= 0 || wordsReadInSession >= rampUpWords) {
     return targetWpm;
   }
-  const factor = 0.65 + 0.35 * (wordsReadInSession / rampUpWords);
+  const factor = 0.65 + 0.35 * (Math.max(0, wordsReadInSession) / rampUpWords);
   return Math.round(targetWpm * factor);
 }
 function findPreviousSentenceStart(words, currentIndex) {
+  currentIndex = clampIndex(currentIndex, words.length);
   if (currentIndex <= 0 || words.length === 0) return 0;
   let searchStart = currentIndex - 1;
-  if (searchStart >= 0 && /[.!?…]+["')\]}]*$/.test(words[searchStart].raw)) {
+  if (searchStart >= 0 && /[.!?…]+["'»”’）)\]}]*$/.test(words[searchStart].raw)) {
     searchStart--;
   }
   for (let i = searchStart; i >= 0; i--) {
-    if (/[.!?…]+["')\]}]*$/.test(words[i].raw)) {
+    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
       return i + 1;
     }
   }
   return 0;
 }
 function findNextSentenceStart(words, currentIndex) {
-  if (currentIndex >= words.length - 1 || words.length === 0) return words.length - 1;
+  currentIndex = clampIndex(currentIndex, words.length);
+  if (words.length === 0) return 0;
+  if (currentIndex >= words.length - 1) return words.length - 1;
   for (let i = currentIndex; i < words.length - 1; i++) {
-    if (/[.!?…]+["')\]}]*$/.test(words[i].raw)) {
+    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
       return i + 1;
     }
   }
@@ -92,7 +95,7 @@ function findNextSentenceStart(words, currentIndex) {
 function calculateTimeSavedMinutes(totalWords, totalSecondsSpent) {
   if (totalWords <= 0) return 0;
   const standardMinutes = totalWords / 200;
-  const actualMinutes = totalSecondsSpent / 60;
+  const actualMinutes = Math.max(0, totalSecondsSpent) / 60;
   return Math.max(0, Math.round((standardMinutes - actualMinutes) * 10) / 10);
 }
 function calculateSessionSummary(wordsRead, activeSeconds, currentWpm, remainingWords) {
@@ -178,179 +181,277 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
     super(app, plugin);
     this.plugin = plugin;
   }
-  display() {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "Speed Reader (RSVP) Settings" });
-    containerEl.createEl("h3", { text: "\u{1F4CA} \u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430 \u0447\u0438\u0442\u0430\u0442\u0435\u043B\u044F (Reader Analytics)" });
-    const statsContainer = containerEl.createDiv({ cls: "sr-stats-dashboard" });
-    const stats = this.plugin.settings.stats;
-    const timeSavedMin = calculateTimeSavedMinutes(stats.totalWordsRead, stats.totalSecondsRead);
-    const totalMinutesSpent = Math.round(stats.totalSecondsRead / 60 * 10) / 10;
-    statsContainer.createEl("div", {
-      text: `\u{1F4DA} \u0412\u0441\u0435\u0433\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E \u0441\u043B\u043E\u0432: ${stats.totalWordsRead.toLocaleString()}`,
-      cls: "sr-stat-item"
-    });
-    statsContainer.createEl("div", {
-      text: `\u23F1\uFE0F \u0412\u0440\u0435\u043C\u044F \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F: ${totalMinutesSpent} \u043C\u0438\u043D (${stats.sessionsCount} \u0441\u0435\u0441\u0441\u0438\u0439)`,
-      cls: "sr-stat-item"
-    });
-    statsContainer.createEl("div", {
-      text: `\u26A1 \u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u0430\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C: ${stats.maxWpm || this.plugin.settings.defaultWpm} WPM`,
-      cls: "sr-stat-item"
-    });
-    statsContainer.createEl("div", {
-      text: `\u{1F680} \u0421\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E \u0432\u0440\u0435\u043C\u0435\u043D\u0438: ~${timeSavedMin} \u043C\u0438\u043D (\u043E\u0442\u043D. 200 WPM)`,
-      cls: "sr-stat-item sr-stat-highlight"
-    });
-    new import_obsidian.Setting(containerEl).setName("\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443").setDesc("\u041E\u0431\u043D\u0443\u043B\u0438\u0442\u044C \u043D\u0430\u043A\u043E\u043F\u043B\u0435\u043D\u043D\u0443\u044E \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0445 \u0441\u043B\u043E\u0432 \u0438 \u0432\u0440\u0435\u043C\u0435\u043D\u0438").addButton(
-      (btn) => btn.setButtonText("\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C").setWarning().onClick(async () => {
-        this.plugin.settings.stats = {
-          totalWordsRead: 0,
-          totalSecondsRead: 0,
-          maxWpm: 0,
-          sessionsCount: 0
-        };
-        await this.plugin.saveSettings();
-        this.display();
-      })
-    );
-    containerEl.createEl("h3", { text: "\u26A1 \u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0448\u0440\u0438\u0444\u0442" });
-    new import_obsidian.Setting(containerEl).setName("\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E (WPM)").setDesc("\u0421\u043B\u043E\u0432 \u0432 \u043C\u0438\u043D\u0443\u0442\u0443 \u043F\u0440\u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 (\u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F \u043D\u0430 \u043B\u0435\u0442\u0443 \u0441\u0442\u0440\u0435\u043B\u043A\u0430\u043C\u0438 \u2191\u2193)").addSlider(
-      (slider) => slider.setLimits(100, 1e3, 25).setValue(this.plugin.settings.defaultWpm).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.defaultWpm = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0420\u0430\u0437\u043C\u0435\u0440 \u0448\u0440\u0438\u0444\u0442\u0430").setDesc("\u0420\u0430\u0437\u043C\u0435\u0440 \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445").addSlider(
-      (slider) => slider.setLimits(24, 72, 2).setValue(this.plugin.settings.fontSize).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.fontSize = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0428\u0440\u0438\u0444\u0442 \u0440\u0438\u0434\u0435\u0440\u0430").setDesc(
-      "Golos Text \u2014 \u043A\u0440\u0443\u043F\u043D\u044B\u0439 x-height, \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043F\u0435\u0440\u0442\u0443\u0440\u044B, \u043F\u043E\u043B\u043D\u0430\u044F \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 (\u0445\u043E\u0440\u043E\u0448\u043E \u0434\u043B\u044F \u0447\u0442\u0435\u043D\u0438\u044F \u0432 \u043E\u0434\u0438\u043D \u0441\u0442\u043E\u043B\u0431\u0435\u0446). Atkinson Hyperlegible \u0440\u0430\u0437\u043B\u0438\u0447\u0438\u043C \u043F\u043E \u0444\u043E\u0440\u043C\u0435 \u0431\u0443\u043A\u0432, \u043D\u043E \u0432 \u043D\u0451\u043C \u043D\u0435\u0442 \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u044B: \u0434\u043B\u044F \u0440\u0443\u0441\u0441\u043A\u0438\u0445 \u0441\u043B\u043E\u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043F\u043E\u0434\u0441\u0442\u0430\u0432\u0438\u0442 \u0434\u0440\u0443\u0433\u043E\u0439 \u0448\u0440\u0438\u0444\u0442."
-    ).addDropdown(
-      (dropdown) => dropdown.addOption("theme", "\u041A\u0430\u043A \u0432 \u0442\u0435\u043C\u0435 Obsidian").addOption("golos", "Golos Text (\u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 + \u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)").addOption("atkinson", "Atkinson Hyperlegible (\u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)").setValue(this.plugin.settings.readerFont).onChange(async (value) => {
-        this.plugin.settings.readerFont = value === "golos" || value === "atkinson" ? value : "theme";
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0426\u0432\u0435\u0442\u043D\u0430\u044F \u043F\u043E\u0434\u0441\u0432\u0435\u0442\u043A\u0430 \u0431\u0443\u043A\u0432\u044B-\u0444\u043E\u043A\u0443\u0441\u0430 (ORP)").setDesc("\u0412\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u043A\u043B\u044E\u0447\u0435\u0432\u043E\u0439 \u0431\u0443\u043A\u0432\u044B \u0434\u043B\u044F \u043C\u0435\u043D\u044C\u0448\u0435\u0439 \u0443\u0442\u043E\u043C\u043B\u044F\u0435\u043C\u043E\u0441\u0442\u0438 \u0433\u043B\u0430\u0437").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.highlightOrp).onChange(async (value) => {
-        this.plugin.settings.highlightOrp = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0431\u0443\u043A\u0432 \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0438\u0432\u0430\u0442\u044C (\u0437\u043E\u043D\u0430 \u0444\u043E\u043A\u0443\u0441\u0430)").setDesc("1 \u2014 \u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 Spritz: \u043E\u0434\u043D\u0430 \u043A\u0440\u0430\u0441\u043D\u0430\u044F \u0431\u0443\u043A\u0432\u0430. 2\u20133 \u2014 \u0448\u0438\u0440\u0435 \u0437\u043E\u043D\u0430 \u0440\u0430\u0441\u043F\u043E\u0437\u043D\u0430\u0432\u0430\u043D\u0438\u044F, \u043B\u0435\u0433\u0447\u0435 \u0443\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u043E \u043D\u0430 \u0432\u044B\u0441\u043E\u043A\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438").addDropdown(
-      (dropdown) => {
-        var _a;
-        return dropdown.addOption("1", "1 \u0431\u0443\u043A\u0432\u0430").addOption("2", "2 \u0431\u0443\u043A\u0432\u044B").addOption("3", "3 \u0431\u0443\u043A\u0432\u044B").setValue(String((_a = this.plugin.settings.orpWidth) != null ? _a : 1)).onChange(async (value) => {
-          this.plugin.settings.orpWidth = Math.max(1, Math.min(3, parseInt(value, 10) || 1));
-          await this.plugin.saveSettings();
-        });
+  getControlValue(key) {
+    const value = super.getControlValue(key);
+    return key === "orpWidth" || key === "chunkSize" ? String(value) : value;
+  }
+  async setControlValue(key, value) {
+    var _a;
+    let control;
+    for (const group of this.getSettingDefinitions()) {
+      const items = "items" in group ? (_a = group.items) != null ? _a : [] : [group];
+      const item = items.find((item2) => {
+        var _a2;
+        return "control" in item2 && ((_a2 = item2.control) == null ? void 0 : _a2.key) === key;
+      });
+      if (item && "control" in item) control = item.control;
+    }
+    if ((control == null ? void 0 : control.type) === "slider") {
+      const slider = control;
+      value = typeof value === "number" && Number.isFinite(value) ? Math.max(slider.min, Math.min(slider.max, value)) : slider.defaultValue;
+    } else if (key === "orpWidth" || key === "chunkSize") {
+      value = Math.max(1, Math.min(3, parseInt(String(value), 10) || 1));
+    } else if (key === "orpColor") {
+      value = String(value).trim() || DEFAULT_SETTINGS.orpColor;
+    } else if (key === "readerFont") {
+      value = value === "golos" || value === "atkinson" ? value : "theme";
+    } else if (key === "redicleAlignment") {
+      value = value === "center" ? "center" : "spritz";
+    }
+    await super.setControlValue(key, value);
+  }
+  getSettingDefinitions() {
+    return [
+      {
+        type: "group",
+        heading: "\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430 \u0447\u0438\u0442\u0430\u0442\u0435\u043B\u044F (Reader Analytics)",
+        items: [
+          {
+            name: "\u0421\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0430 \u0447\u0442\u0435\u043D\u0438\u044F",
+            desc: "\u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430, \u0432\u0440\u0435\u043C\u044F \u0447\u0442\u0435\u043D\u0438\u044F, \u0441\u0435\u0441\u0441\u0438\u0438, \u043C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u0430\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u044D\u043A\u043E\u043D\u043E\u043C\u0438\u044F \u0432\u0440\u0435\u043C\u0435\u043D\u0438",
+            aliases: ["stats", "analytics", "statistics", "WPM"],
+            render: (setting) => {
+              const stats = this.plugin.settings.stats;
+              const timeSavedMin = calculateTimeSavedMinutes(stats.totalWordsRead, stats.totalSecondsRead);
+              const totalMinutesSpent = Math.round(stats.totalSecondsRead / 60 * 10) / 10;
+              setting.descEl.empty();
+              const dashboard = setting.descEl.createDiv({ cls: "sr-stats-dashboard" });
+              dashboard.createDiv({
+                text: `\u{1F4DA} \u0412\u0441\u0435\u0433\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E \u0441\u043B\u043E\u0432: ${stats.totalWordsRead.toLocaleString()}`,
+                cls: "sr-stat-item"
+              });
+              dashboard.createDiv({
+                text: `\u23F1\uFE0F \u0412\u0440\u0435\u043C\u044F \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F: ${totalMinutesSpent} \u043C\u0438\u043D (${stats.sessionsCount} \u0441\u0435\u0441\u0441\u0438\u0439)`,
+                cls: "sr-stat-item"
+              });
+              dashboard.createDiv({
+                text: `\u26A1 \u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u0430\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C: ${stats.maxWpm || this.plugin.settings.defaultWpm} WPM`,
+                cls: "sr-stat-item"
+              });
+              dashboard.createDiv({
+                text: `\u{1F680} \u0421\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E \u0432\u0440\u0435\u043C\u0435\u043D\u0438: ~${timeSavedMin} \u043C\u0438\u043D (\u043E\u0442\u043D. 200 WPM)`,
+                cls: "sr-stat-item sr-stat-highlight"
+              });
+            }
+          },
+          {
+            name: "\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443",
+            desc: "\u041E\u0431\u043D\u0443\u043B\u0438\u0442\u044C \u043D\u0430\u043A\u043E\u043F\u043B\u0435\u043D\u043D\u0443\u044E \u0441\u0442\u0430\u0442\u0438\u0441\u0442\u0438\u043A\u0443 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0445 \u0441\u043B\u043E\u0432 \u0438 \u0432\u0440\u0435\u043C\u0435\u043D\u0438",
+            aliases: ["reset statistics", "analytics"],
+            render: (setting) => {
+              setting.addButton(
+                (button) => button.setButtonText("\u0421\u0431\u0440\u043E\u0441\u0438\u0442\u044C").setDestructive().onClick(async () => {
+                  this.plugin.settings.stats = { ...DEFAULT_SETTINGS.stats };
+                  await this.plugin.saveSettings();
+                  this.update();
+                })
+              );
+            }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0448\u0440\u0438\u0444\u0442",
+        items: [
+          {
+            name: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E (WPM)",
+            desc: "\u0421\u043B\u043E\u0432 \u0432 \u043C\u0438\u043D\u0443\u0442\u0443 \u043F\u0440\u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 (\u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F \u043D\u0430 \u043B\u0435\u0442\u0443 \u0441\u0442\u0440\u0435\u043B\u043A\u0430\u043C\u0438 \u2191\u2193)",
+            aliases: ["defaultWpm"],
+            control: { type: "slider", key: "defaultWpm", min: 100, max: 1e3, step: 25, defaultValue: DEFAULT_SETTINGS.defaultWpm }
+          },
+          {
+            name: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0448\u0440\u0438\u0444\u0442\u0430",
+            desc: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043F\u0438\u043A\u0441\u0435\u043B\u044F\u0445",
+            aliases: ["fontSize"],
+            control: { type: "slider", key: "fontSize", min: 24, max: 72, step: 2, defaultValue: DEFAULT_SETTINGS.fontSize }
+          },
+          {
+            name: "\u0428\u0440\u0438\u0444\u0442 \u0440\u0438\u0434\u0435\u0440\u0430",
+            desc: "Golos Text \u2014 \u043A\u0440\u0443\u043F\u043D\u044B\u0439 x-height, \u043E\u0442\u043A\u0440\u044B\u0442\u044B\u0435 \u0430\u043F\u0435\u0440\u0442\u0443\u0440\u044B, \u043F\u043E\u043B\u043D\u0430\u044F \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 (\u0445\u043E\u0440\u043E\u0448\u043E \u0434\u043B\u044F \u0447\u0442\u0435\u043D\u0438\u044F \u0432 \u043E\u0434\u0438\u043D \u0441\u0442\u043E\u043B\u0431\u0435\u0446). Atkinson Hyperlegible \u0440\u0430\u0437\u043B\u0438\u0447\u0438\u043C \u043F\u043E \u0444\u043E\u0440\u043C\u0435 \u0431\u0443\u043A\u0432, \u043D\u043E \u0432 \u043D\u0451\u043C \u043D\u0435\u0442 \u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u044B: \u0434\u043B\u044F \u0440\u0443\u0441\u0441\u043A\u0438\u0445 \u0441\u043B\u043E\u0432 \u0431\u0440\u0430\u0443\u0437\u0435\u0440 \u043F\u043E\u0434\u0441\u0442\u0430\u0432\u0438\u0442 \u0434\u0440\u0443\u0433\u043E\u0439 \u0448\u0440\u0438\u0444\u0442.",
+            aliases: ["readerFont"],
+            control: {
+              type: "dropdown",
+              key: "readerFont",
+              defaultValue: String(DEFAULT_SETTINGS.readerFont),
+              options: {
+                "theme": "\u041A\u0430\u043A \u0432 \u0442\u0435\u043C\u0435 Obsidian",
+                "golos": "Golos Text (\u043A\u0438\u0440\u0438\u043B\u043B\u0438\u0446\u0430 + \u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)",
+                "atkinson": "Atkinson Hyperlegible (\u043B\u0430\u0442\u0438\u043D\u0438\u0446\u0430)"
+              }
+            }
+          },
+          {
+            name: "\u0426\u0432\u0435\u0442\u043D\u0430\u044F \u043F\u043E\u0434\u0441\u0432\u0435\u0442\u043A\u0430 \u0431\u0443\u043A\u0432\u044B-\u0444\u043E\u043A\u0443\u0441\u0430 (ORP)",
+            desc: "\u0412\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u043A\u043B\u044E\u0447\u0435\u0432\u043E\u0439 \u0431\u0443\u043A\u0432\u044B \u0434\u043B\u044F \u043C\u0435\u043D\u044C\u0448\u0435\u0439 \u0443\u0442\u043E\u043C\u043B\u044F\u0435\u043C\u043E\u0441\u0442\u0438 \u0433\u043B\u0430\u0437",
+            aliases: ["highlightOrp"],
+            control: { type: "toggle", key: "highlightOrp", defaultValue: DEFAULT_SETTINGS.highlightOrp }
+          },
+          {
+            name: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0431\u0443\u043A\u0432 \u043F\u043E\u0434\u0441\u0432\u0435\u0447\u0438\u0432\u0430\u0442\u044C (\u0437\u043E\u043D\u0430 \u0444\u043E\u043A\u0443\u0441\u0430)",
+            desc: "1 \u2014 \u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 Spritz: \u043E\u0434\u043D\u0430 \u043A\u0440\u0430\u0441\u043D\u0430\u044F \u0431\u0443\u043A\u0432\u0430. 2\u20133 \u2014 \u0448\u0438\u0440\u0435 \u0437\u043E\u043D\u0430 \u0440\u0430\u0441\u043F\u043E\u0437\u043D\u0430\u0432\u0430\u043D\u0438\u044F, \u043B\u0435\u0433\u0447\u0435 \u0443\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u043E \u043D\u0430 \u0432\u044B\u0441\u043E\u043A\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438",
+            aliases: ["orpWidth"],
+            control: {
+              type: "dropdown",
+              key: "orpWidth",
+              defaultValue: String(DEFAULT_SETTINGS.orpWidth),
+              options: {
+                "1": "1 \u0431\u0443\u043A\u0432\u0430",
+                "2": "2 \u0431\u0443\u043A\u0432\u044B",
+                "3": "3 \u0431\u0443\u043A\u0432\u044B"
+              }
+            }
+          },
+          {
+            name: "\u0426\u0432\u0435\u0442 \u0431\u0443\u043A\u0432\u044B-\u0444\u043E\u043A\u0443\u0441\u0430",
+            desc: "Hex-\u043A\u043E\u0434 \u0446\u0432\u0435\u0442\u0430 \u0438\u043B\u0438 CSS (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, #e63946)",
+            aliases: ["orpColor"],
+            control: { type: "text", key: "orpColor", defaultValue: DEFAULT_SETTINGS.orpColor, placeholder: "#e63946" }
+          },
+          {
+            name: "\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u044F\u044E\u0449\u0438\u0435 \u043C\u0435\u0442\u043A\u0438 \u0444\u0438\u043A\u0441\u0430\u0446\u0438\u0438",
+            desc: "\u0412\u0435\u0440\u0442\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0435 \u0437\u0430\u0441\u0435\u0447\u043A\u0438 \u0441\u0432\u0435\u0440\u0445\u0443 \u0438 \u0441\u043D\u0438\u0437\u0443, \u0446\u0435\u043D\u0442\u0440\u0438\u0440\u0443\u044E\u0449\u0438\u0435 \u0432\u0437\u0433\u043B\u044F\u0434",
+            aliases: ["showFixationGuide"],
+            control: { type: "toggle", key: "showFixationGuide", defaultValue: DEFAULT_SETTINGS.showFixationGuide }
+          },
+          {
+            name: "\u0412\u044B\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u043D\u0438\u0435 \u0440\u0430\u043C\u043A\u0438 Spritz (The Redicle)",
+            desc: "Spritz Redicle (\u0432\u0438\u0437\u0438\u0440 \u043D\u0430 35% \u0441\u043B\u0435\u0432\u0430) \u0434\u0430\u0435\u0442 \u0438\u0434\u0435\u0430\u043B\u044C\u043D\u044B\u0439 \u043E\u043F\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0431\u0430\u043B\u0430\u043D\u0441 \u0434\u043B\u044F \u0434\u043B\u0438\u043D\u043D\u044B\u0445 \u0441\u0443\u0444\u0444\u0438\u043A\u0441\u043E\u0432. \u0426\u0435\u043D\u0442\u0440 (50/50) \u2014 \u0441\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0435.",
+            aliases: ["redicleAlignment"],
+            control: {
+              type: "dropdown",
+              key: "redicleAlignment",
+              defaultValue: String(DEFAULT_SETTINGS.redicleAlignment),
+              options: {
+                "spritz": "Spritz Redicle (35% \u0441\u043B\u0435\u0432\u0430 / 65% \u0441\u043F\u0440\u0430\u0432\u0430)",
+                "center": "\u0421\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0446\u0435\u043D\u0442\u0440\u0443 (50/50)"
+              }
+            }
+          },
+          {
+            name: "\u041D\u0435\u043B\u0438\u043D\u0435\u0439\u043D\u044B\u0439 \u0442\u0435\u043C\u043F Spritz (\u0414\u043B\u0438\u043D\u0430 \u0441\u043B\u043E\u0432)",
+            desc: "\u041A\u043E\u0440\u043E\u0442\u043A\u0438\u0435 \u0441\u043B\u043E\u0432\u0430 (1\u20132 \u0431\u0443\u043A\u0432\u044B) \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043D\u0430 20% \u0431\u044B\u0441\u0442\u0440\u0435\u0435, \u0434\u043B\u0438\u043D\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430 (13+ \u0431\u0443\u043A\u0432) \u2014 \u0437\u0430\u043C\u0435\u0434\u043B\u044F\u044E\u0442\u0441\u044F",
+            aliases: ["spritzVariableTiming"],
+            control: { type: "toggle", key: "spritzVariableTiming", defaultValue: DEFAULT_SETTINGS.spritzVariableTiming }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "\u0423\u043C\u043D\u044B\u0439 \u0442\u0435\u043C\u043F (Smart Pacing & Rhythm)",
+        items: [
+          {
+            name: "\u041F\u043B\u0430\u0432\u043D\u044B\u0439 \u0440\u0430\u0437\u0433\u043E\u043D (Speed Ramp-up)",
+            desc: "\u041D\u0430\u0447\u0438\u043D\u0430\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0441 65% \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 \u0438 \u043F\u043B\u0430\u0432\u043D\u043E \u0440\u0430\u0437\u0433\u043E\u043D\u044F\u0442\u044C\u0441\u044F \u0437\u0430 \u043F\u0435\u0440\u0432\u044B\u0435 \u0441\u043B\u043E\u0432\u0430, \u0447\u0442\u043E\u0431\u044B \u043C\u043E\u0437\u0433 \u0430\u0434\u0430\u043F\u0442\u0438\u0440\u043E\u0432\u0430\u043B\u0441\u044F",
+            aliases: ["enableRampUp"],
+            control: { type: "toggle", key: "enableRampUp", defaultValue: DEFAULT_SETTINGS.enableRampUp }
+          },
+          {
+            name: "\u0414\u043B\u0438\u043D\u0430 \u0440\u0430\u0437\u0433\u043E\u043D\u0430 (\u0441\u043B\u043E\u0432)",
+            desc: "\u0417\u0430 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0435\u0440\u0432\u044B\u0445 \u0441\u043B\u043E\u0432 \u0434\u043E\u0441\u0442\u0438\u0433\u0430\u0442\u044C \u0446\u0435\u043B\u0435\u0432\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 WPM",
+            aliases: ["rampUpWords"],
+            control: { type: "slider", key: "rampUpWords", min: 5, max: 40, step: 5, defaultValue: DEFAULT_SETTINGS.rampUpWords }
+          },
+          {
+            name: "\u0418\u0442\u043E\u0433\u0438 \u0438 \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043D\u0430 \u043F\u0430\u0443\u0437\u0435",
+            desc: "\u041F\u0440\u0438 \u043F\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0435 \u043D\u0430 \u043F\u0430\u0443\u0437\u0443 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E, \u0440\u0435\u0430\u043B\u044C\u043D\u0443\u044E \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C, \u044D\u043A\u043E\u043D\u043E\u043C\u0438\u044E \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0443\u044E \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044E",
+            aliases: ["showPauseStats"],
+            control: { type: "toggle", key: "showPauseStats", defaultValue: DEFAULT_SETTINGS.showPauseStats }
+          },
+          {
+            name: "\u0410\u0432\u0442\u043E-\u043E\u0442\u043A\u0430\u0442 \u043F\u0440\u0438 \u043F\u0430\u0443\u0437\u0435 (Rewind on Pause)",
+            desc: "\u041F\u0440\u0438 \u043D\u0430\u0436\u0430\u0442\u0438\u0438 \u043F\u0430\u0443\u0437\u044B \u043E\u0442\u043A\u0430\u0442\u044B\u0432\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0441\u043B\u043E\u0432 \u043D\u0430\u0437\u0430\u0434, \u0447\u0442\u043E\u0431\u044B \u043D\u0435 \u0442\u0435\u0440\u044F\u0442\u044C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043F\u0440\u0438 \u0432\u043E\u0437\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0438",
+            aliases: ["rewindOnPause"],
+            control: { type: "toggle", key: "rewindOnPause", defaultValue: DEFAULT_SETTINGS.rewindOnPause }
+          },
+          {
+            name: "\u0421\u043B\u043E\u0432 \u0434\u043B\u044F \u0430\u0432\u0442\u043E-\u043E\u0442\u043A\u0430\u0442\u0430",
+            desc: "\u041A\u043E\u043B\u0438\u0447\u0435\u0441\u0442\u0432\u043E \u0441\u043B\u043E\u0432, \u043D\u0430 \u043A\u043E\u0442\u043E\u0440\u043E\u0435 \u0440\u0438\u0434\u0435\u0440 \u043E\u0442\u0441\u0442\u0443\u043F\u0430\u0435\u0442 \u043D\u0430\u0437\u0430\u0434 \u043F\u0440\u0438 \u043F\u0430\u0443\u0437\u0435",
+            aliases: ["rewindOnPauseWords"],
+            control: { type: "slider", key: "rewindOnPauseWords", min: 1, max: 10, step: 1, defaultValue: DEFAULT_SETTINGS.rewindOnPauseWords }
+          },
+          {
+            name: "\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0430\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432",
+            desc: "\u0414\u0435\u043B\u0430\u0442\u044C \u0434\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u0443\u044E \u043F\u0430\u0443\u0437\u0443 \u0432 \u043A\u043E\u043D\u0446\u0435 \u0441\u043C\u044B\u0441\u043B\u043E\u0432\u044B\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432 \u0434\u043B\u044F \u043E\u0441\u043C\u044B\u0441\u043B\u0435\u043D\u0438\u044F \u043C\u044B\u0441\u043B\u0438",
+            aliases: ["pauseOnParagraphs"],
+            control: { type: "toggle", key: "pauseOnParagraphs", defaultValue: DEFAULT_SETTINGS.pauseOnParagraphs }
+          },
+          {
+            name: "\u0423\u043C\u043D\u044B\u0435 \u043F\u0430\u0443\u0437\u044B \u043D\u0430 \u0447\u0438\u0441\u043B\u0430\u0445 \u0438 \u0430\u0431\u0431\u0440\u0435\u0432\u0438\u0430\u0442\u0443\u0440\u0430\u0445",
+            desc: "\u0421\u043B\u0435\u0433\u043A\u0430 \u0437\u0430\u043C\u0435\u0434\u043B\u044F\u0442\u044C\u0441\u044F \u043D\u0430 \u0446\u0438\u0444\u0440\u0430\u0445 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 2026, $500) \u0438 \u0430\u0431\u0431\u0440\u0435\u0432\u0438\u0430\u0442\u0443\u0440\u0430\u0445 (API, \u041D\u0410\u0422\u041E, HTML)",
+            aliases: ["pauseOnNumbersAndAcronyms"],
+            control: { type: "toggle", key: "pauseOnNumbersAndAcronyms", defaultValue: DEFAULT_SETTINGS.pauseOnNumbersAndAcronyms }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "\u0420\u0435\u0436\u0438\u043C\u044B \u043E\u0442\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u0438 \u0427\u0430\u043D\u043A\u0438\u043D\u0433 (Display Modes)",
+        items: [
+          {
+            name: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0447\u0430\u043D\u043A\u0430 (\u0441\u043B\u043E\u0432 \u0437\u0430 \u0440\u0430\u0437)",
+            desc: "\u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C \u043F\u043E 1 \u0441\u043B\u043E\u0432\u0443 (\u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 RSVP \u0441 ORP) \u0438\u043B\u0438 \u043F\u043E 2\u20133 \u0441\u043B\u043E\u0432\u0430 \u0434\u043B\u044F \u043E\u043F\u044B\u0442\u043D\u044B\u0445 \u0447\u0442\u0435\u0446\u043E\u0432",
+            aliases: ["chunkSize"],
+            control: {
+              type: "dropdown",
+              key: "chunkSize",
+              defaultValue: String(DEFAULT_SETTINGS.chunkSize),
+              options: {
+                "1": "1 \u0441\u043B\u043E\u0432\u043E (\u0441 \u0442\u043E\u0447\u043A\u043E\u0439 \u0444\u0438\u043A\u0441\u0430\u0446\u0438\u0438 ORP)",
+                "2": "2 \u0441\u043B\u043E\u0432\u0430 (\u043F\u0430\u0440\u043D\u044B\u0439 \u0447\u0430\u043D\u043A\u0438\u043D\u0433)",
+                "3": "3 \u0441\u043B\u043E\u0432\u0430 (\u0442\u0440\u043E\u0439\u043D\u043E\u0439 \u0447\u0430\u043D\u043A\u0438\u043D\u0433)"
+              }
+            }
+          },
+          {
+            name: "Bionic-\u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0432 \u0447\u0430\u043D\u043A\u0430\u0445",
+            desc: "\u0412\u044B\u0434\u0435\u043B\u044F\u0442\u044C \u0436\u0438\u0440\u043D\u044B\u043C \u043F\u0435\u0440\u0432\u044B\u0435 \u0431\u0443\u043A\u0432\u044B \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430 \u043F\u0440\u0438 \u043F\u043E\u043A\u0430\u0437\u0435 \u043F\u043E 2\u20133 \u0441\u043B\u043E\u0432\u0430 \u0440\u0430\u0437\u043E\u043C",
+            aliases: ["bionicInChunks"],
+            control: { type: "toggle", key: "bionicInChunks", defaultValue: DEFAULT_SETTINGS.bionicInChunks }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "\u041F\u0430\u043C\u044F\u0442\u044C \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441\u0430 \u0438 \u041D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044F (Progress & Sync)",
+        items: [
+          {
+            name: "\u0417\u0430\u043F\u043E\u043C\u0438\u043D\u0430\u0442\u044C \u043C\u0435\u0441\u0442\u043E \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0438 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0435",
+            desc: "\u041F\u0440\u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u043E\u043C \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043F\u0440\u0435\u0434\u043B\u0430\u0433\u0430\u0442\u044C \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0441 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043D\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430",
+            aliases: ["rememberProgress"],
+            control: { type: "toggle", key: "rememberProgress", defaultValue: DEFAULT_SETTINGS.rememberProgress }
+          },
+          {
+            name: "\u0421\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F \u043A\u0443\u0440\u0441\u043E\u0440\u0430 \u0432 \u0440\u0435\u0434\u0430\u043A\u0442\u043E\u0440\u0435",
+            desc: "\u041F\u0440\u0438 \u0437\u0430\u043A\u0440\u044B\u0442\u0438\u0438 \u0440\u0438\u0434\u0435\u0440\u0430 \u043F\u0435\u0440\u0435\u043C\u0435\u0449\u0430\u0442\u044C \u043A\u0443\u0440\u0441\u043E\u0440 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043D\u0430 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u043E\u0435 \u0441\u043B\u043E\u0432\u043E",
+            aliases: ["syncCursorOnClose"],
+            control: { type: "toggle", key: "syncCursorOnClose", defaultValue: DEFAULT_SETTINGS.syncCursorOnClose }
+          }
+        ]
+      },
+      {
+        type: "group",
+        heading: "\u0410\u0443\u0434\u0438\u043E-\u0441\u043E\u043F\u0440\u043E\u0432\u043E\u0436\u0434\u0435\u043D\u0438\u0435 (Text-to-Speech / TTS)",
+        items: [
+          {
+            name: "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043E\u0437\u0432\u0443\u0447\u043A\u0443 (TTS)",
+            desc: "\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u0438\u0442\u044C \u0447\u0438\u0442\u0430\u0435\u043C\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0433\u043E\u043B\u043E\u0441\u043E\u043C \u0432 \u0440\u0435\u0430\u043B\u044C\u043D\u043E\u043C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0447\u0435\u0440\u0435\u0437 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 \u0441\u0438\u043D\u0442\u0435\u0437\u0430\u0442\u043E\u0440 \u0440\u0435\u0447\u0438",
+            aliases: ["enableTts"],
+            control: { type: "toggle", key: "enableTts", defaultValue: DEFAULT_SETTINGS.enableTts }
+          }
+        ]
       }
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0426\u0432\u0435\u0442 \u0431\u0443\u043A\u0432\u044B-\u0444\u043E\u043A\u0443\u0441\u0430").setDesc("Hex-\u043A\u043E\u0434 \u0446\u0432\u0435\u0442\u0430 \u0438\u043B\u0438 CSS (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440, #e63946)").addText(
-      (text) => text.setPlaceholder("#e63946").setValue(this.plugin.settings.orpColor).onChange(async (value) => {
-        this.plugin.settings.orpColor = value.trim() || "#e63946";
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u041D\u0430\u043F\u0440\u0430\u0432\u043B\u044F\u044E\u0449\u0438\u0435 \u043C\u0435\u0442\u043A\u0438 \u0444\u0438\u043A\u0441\u0430\u0446\u0438\u0438").setDesc("\u0412\u0435\u0440\u0442\u0438\u043A\u0430\u043B\u044C\u043D\u044B\u0435 \u0437\u0430\u0441\u0435\u0447\u043A\u0438 \u0441\u0432\u0435\u0440\u0445\u0443 \u0438 \u0441\u043D\u0438\u0437\u0443, \u0446\u0435\u043D\u0442\u0440\u0438\u0440\u0443\u044E\u0449\u0438\u0435 \u0432\u0437\u0433\u043B\u044F\u0434").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showFixationGuide).onChange(async (value) => {
-        this.plugin.settings.showFixationGuide = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0412\u044B\u0440\u0430\u0432\u043D\u0438\u0432\u0430\u043D\u0438\u0435 \u0440\u0430\u043C\u043A\u0438 Spritz (The Redicle)").setDesc("Spritz Redicle (\u0432\u0438\u0437\u0438\u0440 \u043D\u0430 35% \u0441\u043B\u0435\u0432\u0430) \u0434\u0430\u0435\u0442 \u0438\u0434\u0435\u0430\u043B\u044C\u043D\u044B\u0439 \u043E\u043F\u0442\u0438\u0447\u0435\u0441\u043A\u0438\u0439 \u0431\u0430\u043B\u0430\u043D\u0441 \u0434\u043B\u044F \u0434\u043B\u0438\u043D\u043D\u044B\u0445 \u0441\u0443\u0444\u0444\u0438\u043A\u0441\u043E\u0432. \u0426\u0435\u043D\u0442\u0440 (50/50) \u2014 \u0441\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0441\u0435\u0440\u0435\u0434\u0438\u043D\u0435.").addDropdown(
-      (dropdown) => dropdown.addOption("spritz", "Spritz Redicle (35% \u0441\u043B\u0435\u0432\u0430 / 65% \u0441\u043F\u0440\u0430\u0432\u0430)").addOption("center", "\u0421\u0442\u0440\u043E\u0433\u043E \u043F\u043E \u0446\u0435\u043D\u0442\u0440\u0443 (50/50)").setValue(this.plugin.settings.redicleAlignment).onChange(async (value) => {
-        this.plugin.settings.redicleAlignment = value === "center" ? "center" : "spritz";
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u041D\u0435\u043B\u0438\u043D\u0435\u0439\u043D\u044B\u0439 \u0442\u0435\u043C\u043F Spritz (\u0414\u043B\u0438\u043D\u0430 \u0441\u043B\u043E\u0432)").setDesc("\u041A\u043E\u0440\u043E\u0442\u043A\u0438\u0435 \u0441\u043B\u043E\u0432\u0430 (1\u20132 \u0431\u0443\u043A\u0432\u044B) \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u044E\u0442\u0441\u044F \u043D\u0430 20% \u0431\u044B\u0441\u0442\u0440\u0435\u0435, \u0434\u043B\u0438\u043D\u043D\u044B\u0435 \u0441\u043B\u043E\u0432\u0430 (13+ \u0431\u0443\u043A\u0432) \u2014 \u0437\u0430\u043C\u0435\u0434\u043B\u044F\u044E\u0442\u0441\u044F").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.spritzVariableTiming).onChange(async (value) => {
-        this.plugin.settings.spritzVariableTiming = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "\u{1F9E0} \u0423\u043C\u043D\u044B\u0439 \u0442\u0435\u043C\u043F (Smart Pacing & Rhythm)" });
-    new import_obsidian.Setting(containerEl).setName("\u041F\u043B\u0430\u0432\u043D\u044B\u0439 \u0440\u0430\u0437\u0433\u043E\u043D (Speed Ramp-up)").setDesc("\u041D\u0430\u0447\u0438\u043D\u0430\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0441 65% \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 \u0438 \u043F\u043B\u0430\u0432\u043D\u043E \u0440\u0430\u0437\u0433\u043E\u043D\u044F\u0442\u044C\u0441\u044F \u0437\u0430 \u043F\u0435\u0440\u0432\u044B\u0435 \u0441\u043B\u043E\u0432\u0430, \u0447\u0442\u043E\u0431\u044B \u043C\u043E\u0437\u0433 \u0430\u0434\u0430\u043F\u0442\u0438\u0440\u043E\u0432\u0430\u043B\u0441\u044F").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.enableRampUp).onChange(async (value) => {
-        this.plugin.settings.enableRampUp = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0414\u043B\u0438\u043D\u0430 \u0440\u0430\u0437\u0433\u043E\u043D\u0430 (\u0441\u043B\u043E\u0432)").setDesc("\u0417\u0430 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0435\u0440\u0432\u044B\u0445 \u0441\u043B\u043E\u0432 \u0434\u043E\u0441\u0442\u0438\u0433\u0430\u0442\u044C \u0446\u0435\u043B\u0435\u0432\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 WPM").addSlider(
-      (slider) => slider.setLimits(5, 40, 5).setValue(this.plugin.settings.rampUpWords).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.rampUpWords = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0418\u0442\u043E\u0433\u0438 \u0438 \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043D\u0430 \u043F\u0430\u0443\u0437\u0435").setDesc("\u041F\u0440\u0438 \u043F\u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0435 \u043D\u0430 \u043F\u0430\u0443\u0437\u0443 \u043F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C, \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E, \u0440\u0435\u0430\u043B\u044C\u043D\u0443\u044E \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C, \u044D\u043A\u043E\u043D\u043E\u043C\u0438\u044E \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0438 \u043A\u043E\u0440\u043E\u0442\u043A\u0443\u044E \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044E").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.showPauseStats !== false).onChange(async (value) => {
-        this.plugin.settings.showPauseStats = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0410\u0432\u0442\u043E-\u043E\u0442\u043A\u0430\u0442 \u043F\u0440\u0438 \u043F\u0430\u0443\u0437\u0435 (Rewind on Pause)").setDesc("\u041F\u0440\u0438 \u043D\u0430\u0436\u0430\u0442\u0438\u0438 \u043F\u0430\u0443\u0437\u044B \u043E\u0442\u043A\u0430\u0442\u044B\u0432\u0430\u0442\u044C\u0441\u044F \u043D\u0430 \u043D\u0435\u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0441\u043B\u043E\u0432 \u043D\u0430\u0437\u0430\u0434, \u0447\u0442\u043E\u0431\u044B \u043D\u0435 \u0442\u0435\u0440\u044F\u0442\u044C \u043A\u043E\u043D\u0442\u0435\u043A\u0441\u0442 \u043F\u0440\u0438 \u0432\u043E\u0437\u043E\u0431\u043D\u043E\u0432\u043B\u0435\u043D\u0438\u0438").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.rewindOnPause).onChange(async (value) => {
-        this.plugin.settings.rewindOnPause = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0421\u043B\u043E\u0432 \u0434\u043B\u044F \u0430\u0432\u0442\u043E-\u043E\u0442\u043A\u0430\u0442\u0430").setDesc("\u041A\u043E\u043B\u0438\u0447\u0435\u0441\u0442\u0432\u043E \u0441\u043B\u043E\u0432, \u043D\u0430 \u043A\u043E\u0442\u043E\u0440\u043E\u0435 \u0440\u0438\u0434\u0435\u0440 \u043E\u0442\u0441\u0442\u0443\u043F\u0430\u0435\u0442 \u043D\u0430\u0437\u0430\u0434 \u043F\u0440\u0438 \u043F\u0430\u0443\u0437\u0435").addSlider(
-      (slider) => slider.setLimits(1, 10, 1).setValue(this.plugin.settings.rewindOnPauseWords).setDynamicTooltip().onChange(async (value) => {
-        this.plugin.settings.rewindOnPauseWords = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0430\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432").setDesc("\u0414\u0435\u043B\u0430\u0442\u044C \u0434\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u0443\u044E \u043F\u0430\u0443\u0437\u0443 \u0432 \u043A\u043E\u043D\u0446\u0435 \u0441\u043C\u044B\u0441\u043B\u043E\u0432\u044B\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432 \u0434\u043B\u044F \u043E\u0441\u043C\u044B\u0441\u043B\u0435\u043D\u0438\u044F \u043C\u044B\u0441\u043B\u0438").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.pauseOnParagraphs).onChange(async (value) => {
-        this.plugin.settings.pauseOnParagraphs = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0423\u043C\u043D\u044B\u0435 \u043F\u0430\u0443\u0437\u044B \u043D\u0430 \u0447\u0438\u0441\u043B\u0430\u0445 \u0438 \u0430\u0431\u0431\u0440\u0435\u0432\u0438\u0430\u0442\u0443\u0440\u0430\u0445").setDesc("\u0421\u043B\u0435\u0433\u043A\u0430 \u0437\u0430\u043C\u0435\u0434\u043B\u044F\u0442\u044C\u0441\u044F \u043D\u0430 \u0446\u0438\u0444\u0440\u0430\u0445 (\u043D\u0430\u043F\u0440\u0438\u043C\u0435\u0440 2026, $500) \u0438 \u0430\u0431\u0431\u0440\u0435\u0432\u0438\u0430\u0442\u0443\u0440\u0430\u0445 (API, \u041D\u0410\u0422\u041E, HTML)").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.pauseOnNumbersAndAcronyms).onChange(async (value) => {
-        this.plugin.settings.pauseOnNumbersAndAcronyms = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "\u{1F4D6} \u0420\u0435\u0436\u0438\u043C\u044B \u043E\u0442\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u0438 \u0427\u0430\u043D\u043A\u0438\u043D\u0433 (Display Modes)" });
-    new import_obsidian.Setting(containerEl).setName("\u0420\u0430\u0437\u043C\u0435\u0440 \u0447\u0430\u043D\u043A\u0430 (\u0441\u043B\u043E\u0432 \u0437\u0430 \u0440\u0430\u0437)").setDesc("\u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C \u043F\u043E 1 \u0441\u043B\u043E\u0432\u0443 (\u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 RSVP \u0441 ORP) \u0438\u043B\u0438 \u043F\u043E 2\u20133 \u0441\u043B\u043E\u0432\u0430 \u0434\u043B\u044F \u043E\u043F\u044B\u0442\u043D\u044B\u0445 \u0447\u0442\u0435\u0446\u043E\u0432").addDropdown(
-      (dropdown) => dropdown.addOption("1", "1 \u0441\u043B\u043E\u0432\u043E (\u0441 \u0442\u043E\u0447\u043A\u043E\u0439 \u0444\u0438\u043A\u0441\u0430\u0446\u0438\u0438 ORP)").addOption("2", "2 \u0441\u043B\u043E\u0432\u0430 (\u043F\u0430\u0440\u043D\u044B\u0439 \u0447\u0430\u043D\u043A\u0438\u043D\u0433)").addOption("3", "3 \u0441\u043B\u043E\u0432\u0430 (\u0442\u0440\u043E\u0439\u043D\u043E\u0439 \u0447\u0430\u043D\u043A\u0438\u043D\u0433)").setValue(String(this.plugin.settings.chunkSize)).onChange(async (value) => {
-        this.plugin.settings.chunkSize = parseInt(value, 10);
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("Bionic-\u0432\u044B\u0434\u0435\u043B\u0435\u043D\u0438\u0435 \u0432 \u0447\u0430\u043D\u043A\u0430\u0445").setDesc("\u0412\u044B\u0434\u0435\u043B\u044F\u0442\u044C \u0436\u0438\u0440\u043D\u044B\u043C \u043F\u0435\u0440\u0432\u044B\u0435 \u0431\u0443\u043A\u0432\u044B \u043A\u0430\u0436\u0434\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430 \u043F\u0440\u0438 \u043F\u043E\u043A\u0430\u0437\u0435 \u043F\u043E 2\u20133 \u0441\u043B\u043E\u0432\u0430 \u0440\u0430\u0437\u043E\u043C").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.bionicInChunks).onChange(async (value) => {
-        this.plugin.settings.bionicInChunks = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "\u{1F4BE} \u041F\u0430\u043C\u044F\u0442\u044C \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441\u0430 \u0438 \u041D\u0430\u0432\u0438\u0433\u0430\u0446\u0438\u044F (Progress & Sync)" });
-    new import_obsidian.Setting(containerEl).setName("\u0417\u0430\u043F\u043E\u043C\u0438\u043D\u0430\u0442\u044C \u043C\u0435\u0441\u0442\u043E \u043E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0438 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0435").setDesc("\u041F\u0440\u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u043D\u043E\u043C \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043F\u0440\u0435\u0434\u043B\u0430\u0433\u0430\u0442\u044C \u043F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0441 \u0441\u043E\u0445\u0440\u0430\u043D\u0435\u043D\u043D\u043E\u0433\u043E \u0441\u043B\u043E\u0432\u0430").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.rememberProgress).onChange(async (value) => {
-        this.plugin.settings.rememberProgress = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    new import_obsidian.Setting(containerEl).setName("\u0421\u0438\u043D\u0445\u0440\u043E\u043D\u0438\u0437\u0430\u0446\u0438\u044F \u043A\u0443\u0440\u0441\u043E\u0440\u0430 \u0432 \u0440\u0435\u0434\u0430\u043A\u0442\u043E\u0440\u0435").setDesc("\u041F\u0440\u0438 \u0437\u0430\u043A\u0440\u044B\u0442\u0438\u0438 \u0440\u0438\u0434\u0435\u0440\u0430 \u043F\u0435\u0440\u0435\u043C\u0435\u0449\u0430\u0442\u044C \u043A\u0443\u0440\u0441\u043E\u0440 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u043D\u0430 \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u043E\u0435 \u0441\u043B\u043E\u0432\u043E").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.syncCursorOnClose).onChange(async (value) => {
-        this.plugin.settings.syncCursorOnClose = value;
-        await this.plugin.saveSettings();
-      })
-    );
-    containerEl.createEl("h3", { text: "\u{1F50A} \u0410\u0443\u0434\u0438\u043E-\u0441\u043E\u043F\u0440\u043E\u0432\u043E\u0436\u0434\u0435\u043D\u0438\u0435 (Text-to-Speech / TTS)" });
-    new import_obsidian.Setting(containerEl).setName("\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043E\u0437\u0432\u0443\u0447\u043A\u0443 (TTS)").setDesc("\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u0438\u0442\u044C \u0447\u0438\u0442\u0430\u0435\u043C\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0433\u043E\u043B\u043E\u0441\u043E\u043C \u0432 \u0440\u0435\u0430\u043B\u044C\u043D\u043E\u043C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0447\u0435\u0440\u0435\u0437 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 \u0441\u0438\u043D\u0442\u0435\u0437\u0430\u0442\u043E\u0440 \u0440\u0435\u0447\u0438").addToggle(
-      (toggle) => toggle.setValue(this.plugin.settings.enableTts).onChange(async (value) => {
-        this.plugin.settings.enableTts = value;
-        await this.plugin.saveSettings();
-      })
-    );
+    ];
   }
 };
 
@@ -358,26 +459,51 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
 var import_obsidian2 = require("obsidian");
 
 // src/textParser.ts
-function cleanMarkdown(text) {
+function cleanMarkdownWithOffsets(text) {
   let cleaned = text;
-  cleaned = cleaned.replace(/^---[\s\S]*?---\s*/, "");
-  cleaned = cleaned.replace(/```[\s\S]*?```/g, "");
-  cleaned = cleaned.replace(/`([^`]+)`/g, "$1");
-  cleaned = cleaned.replace(/!\[\[.*?\]\]/g, "");
-  cleaned = cleaned.replace(/!\[.*?\]\(.*?\)/g, "");
-  cleaned = cleaned.replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
-  cleaned = cleaned.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  cleaned = cleaned.replace(/<[^>]+>/g, "");
-  cleaned = cleaned.replace(/^#{1,6}\s+/gm, "");
-  cleaned = cleaned.replace(/(\*\*|__)(.*?)\1/g, "$2");
-  cleaned = cleaned.replace(/(\*|_)(.*?)\1/g, "$2");
-  cleaned = cleaned.replace(/~~(.*?)~~/g, "$1");
-  cleaned = cleaned.replace(/^\s*>\s*/gm, "");
-  cleaned = cleaned.replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
-  cleaned = cleaned.replace(/^\s*[-*+]\s+/gm, "");
-  cleaned = cleaned.replace(/^\s*\d+\.\s+/gm, "");
-  cleaned = cleaned.replace(/^\s*[-*_]{3,}\s*$/gm, "");
-  return cleaned.trim();
+  let offsets = Array.from({ length: text.length }, (_, index) => index);
+  const replace = (pattern, replacement) => {
+    const nextOffsets = [];
+    const appendOffsets = (start2, end2) => {
+      for (let index = start2; index < end2; index++) nextOffsets.push(offsets[index]);
+    };
+    let end = 0;
+    cleaned = cleaned.replace(pattern, (...args) => {
+      const match = args[0];
+      const start2 = args[args.length - 2];
+      appendOffsets(end, start2);
+      end = start2 + match.length;
+      if (!replacement) return "";
+      const group = Number(replacement.slice(1));
+      const localPattern = new RegExp(pattern.source, pattern.flags.replace("g", "") + "d");
+      const localMatch = localPattern.exec(match);
+      const range = localMatch.indices[group];
+      appendOffsets(start2 + range[0], start2 + range[1]);
+      return args[group];
+    });
+    appendOffsets(end, offsets.length);
+    offsets = nextOffsets;
+  };
+  replace(/^---[\s\S]*?---\s*/, "");
+  replace(/```[\s\S]*?```/g, "");
+  replace(/`([^`]+)`/g, "$1");
+  replace(/!\[\[.*?\]\]/g, "");
+  replace(/!\[.*?\]\(.*?\)/g, "");
+  replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
+  replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  replace(/<[^>]+>/g, "");
+  replace(/^#{1,6}\s+/gm, "");
+  replace(/(\*\*|__)(.*?)\1/g, "$2");
+  replace(/(\*|_)(.*?)\1/g, "$2");
+  replace(/~~(.*?)~~/g, "$1");
+  replace(/^\s*>\s*/gm, "");
+  replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
+  replace(/^\s*[-*+]\s+/gm, "");
+  replace(/^\s*\d+\.\s+/gm, "");
+  replace(/^\s*[-*_]{3,}\s*$/gm, "");
+  const start = cleaned.match(/^\s*/)[0].length;
+  const trimmed = cleaned.trim();
+  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length) };
 }
 function getOrpIndex(word) {
   const match = word.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
@@ -403,7 +529,7 @@ function getOrpIndex(word) {
 }
 function splitWordForOrp(token, width = 1) {
   const match = token.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
-  const safeWidth = Math.max(1, Math.min(3, Math.round(width)));
+  const safeWidth = Number.isNaN(width) ? 1 : Math.max(1, Math.min(3, Math.round(width)));
   if (!match) {
     const start = Math.floor(token.length / 2);
     return {
@@ -414,7 +540,6 @@ function splitWordForOrp(token, width = 1) {
   }
   const prefixPunct = match[1];
   const coreWord = match[2];
-  const suffixPunct = match[3];
   const orp = getOrpIndex(token);
   const coreEnd = prefixPunct.length + coreWord.length;
   const zoneEnd = Math.min(orp + safeWidth, coreEnd);
@@ -426,7 +551,7 @@ function splitWordForOrp(token, width = 1) {
 }
 function parseWords(text, options) {
   var _a, _b;
-  const cleaned = cleanMarkdown(text);
+  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text);
   if (!cleaned.trim()) return [];
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result = [];
@@ -458,14 +583,18 @@ function parseWords(text, options) {
         } else if (coreWord.length >= 9) {
           lengthMultiplier = 1.15;
         }
+        const compoundParts = coreWord.split(/[-\u2010\u2011]/u);
+        if (compoundParts.length > 1 && compoundParts.every((part) => /^\p{L}+$/u.test(part)) && compoundParts.join("").length >= 9) {
+          lengthMultiplier = Math.max(lengthMultiplier, 2);
+        }
       }
       let punctMultiplier = 1;
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = (_b = options.paragraphPauseMultiplier) != null ? _b : 2.5;
-        } else if (/[.!?…]+["')\]}]*$/.test(token)) {
+        } else if (/[.!?…]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
-        } else if (/[,;:—–-]+["')\]}]*$/.test(token)) {
+        } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
         } else if (options.pauseOnNumbersAndAcronyms && (/\d/.test(token) || /^[A-ZА-ЯЁ\d]{2,}[.,;:!?]?$/u.test(token))) {
           punctMultiplier = 1.35;
@@ -474,9 +603,9 @@ function parseWords(text, options) {
       const delayMultiplier = Math.round(lengthMultiplier * punctMultiplier * 100) / 100;
       let charOffset;
       if (coreWord.length > 0) {
-        const found = text.indexOf(coreWord, searchFrom);
+        const found = cleaned.indexOf(coreWord, searchFrom);
         if (found !== -1) {
-          charOffset = found;
+          charOffset = offsets[found];
           searchFrom = found + coreWord.length;
         }
       }
@@ -503,9 +632,12 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.words = [];
     this.currentIndex = 0;
     this.isPlaying = false;
+    this.completed = false;
+    this.ttsEndIndex = -1;
     this.timer = null;
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
+    this.sessionMaxWpm = 0;
     // Слова, прочитанные с момента последнего старта/возобновления:
     // именно по ним считается разгон, чтобы после паузы он начинался заново.
     this.wordsSinceResume = 0;
@@ -548,7 +680,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       closeBtn.onclick = () => this.close();
       return;
     }
-    const saved = this.noteKey ? this.settings.noteProgress[this.noteKey] : null;
+    const saved = this.noteKey && this.settings.rememberProgress ? this.settings.noteProgress[this.noteKey] : null;
     if (saved && saved.index > 0 && saved.index < this.words.length - 1) {
       this.resumeBannerEl = contentEl.createDiv({ cls: "sr-resume-banner" });
       const pct = Math.round((saved.index + 1) / this.words.length * 100);
@@ -583,7 +715,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (this.settings.redicleAlignment === "spritz") {
       frame.addClass("sr-redicle-spritz");
     }
-    frame.style.setProperty("--sr-font-size", `${this.settings.fontSize}px`);
+    frame.setCssProps({ "--sr-font-size": `${this.settings.fontSize}px` });
     if (this.settings.showFixationGuide && this.settings.chunkSize === 1) {
       const topGuide = frame.createDiv({ cls: "sr-guide sr-guide-top" });
       topGuide.createDiv({ cls: "sr-notch sr-notch-down" });
@@ -595,16 +727,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.focusEl = this.wordBoxEl.createSpan({ cls: "sr-word-part sr-focus" });
     this.suffixEl = this.wordBoxEl.createSpan({ cls: "sr-word-part sr-suffix" });
     this.chunkEl = this.wordBoxEl.createDiv({ cls: "sr-chunk-box" });
-    this.chunkEl.style.display = "none";
-    if (this.settings.highlightOrp) {
-      this.focusEl.style.color = this.settings.orpColor;
-    }
+    this.chunkEl.addClass("sr-hidden");
+    this.focusEl.setCssStyles({ color: this.settings.highlightOrp ? this.settings.orpColor : "var(--text-normal)" });
     if (this.settings.showFixationGuide && this.settings.chunkSize === 1) {
       const bottomGuide = frame.createDiv({ cls: "sr-guide sr-guide-bottom" });
       bottomGuide.createDiv({ cls: "sr-notch sr-notch-up" });
     }
     this.pauseCardEl = contentEl.createDiv({ cls: "sr-pause-card" });
-    this.pauseCardEl.style.display = "none";
+    this.pauseCardEl.addClass("sr-hidden");
     this.contextEl = contentEl.createDiv({ cls: "sr-context-preview" });
     const progressContainer = contentEl.createDiv({ cls: "sr-progress-container" });
     this.progressBar = progressContainer.createEl("input", {
@@ -623,7 +753,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.timeLeftLabel = progressMeta.createSpan({ cls: "sr-time-left-label" });
     const controls = contentEl.createDiv({ cls: "sr-controls" });
     const navGroup = controls.createDiv({ cls: "sr-btn-group" });
-    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430 (R)" } });
+    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430 (r)" } });
     (0, import_obsidian2.setIcon)(restartBtn, "rotate-ccw");
     restartBtn.onclick = () => this.restart();
     const prevSentBtn = navGroup.createEl("button", {
@@ -658,7 +788,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     nextSentBtn.onclick = () => this.jumpSentence(1);
     const ttsBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: "\u041E\u0437\u0432\u0443\u0447\u043A\u0430 / TTS (M)" }
+      attr: { title: "\u041E\u0437\u0432\u0443\u0447\u043A\u0430 / tts (m)" }
     });
     (0, import_obsidian2.setIcon)(ttsBtn, this.settings.enableTts ? "volume-2" : "volume-x");
     ttsBtn.onclick = () => this.toggleTts(ttsBtn);
@@ -723,14 +853,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
       this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
     }
-    const sessionSeconds = Math.round((Date.now() - this.sessionStartTime) / 1e3);
+    const sessionSeconds = Math.round(this.activeMs / 1e3);
     if (this.sessionWordsRead > 0 && sessionSeconds > 0) {
       this.settings.stats.totalWordsRead += this.sessionWordsRead;
       this.settings.stats.totalSecondsRead += sessionSeconds;
-      this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.currentWpm);
+      this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.sessionMaxWpm);
       this.settings.stats.sessionsCount += 1;
-      this.plugin.saveSettings();
     }
+    void this.plugin.saveSettings();
     const { contentEl } = this;
     contentEl.empty();
   }
@@ -745,14 +875,16 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     } else if (this.isPlaying) {
       this.speakFromCurrentSentence();
     }
-    this.plugin.saveSettings();
+    void this.plugin.saveSettings();
   }
-  speakFromCurrentSentence() {
+  speakFromCurrentSentence(startIndex = this.currentIndex) {
     if (!this.settings.enableTts || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
-      const end = findNextSentenceStart(this.words, this.currentIndex);
-      const slice = this.words.slice(this.currentIndex, end + 1);
+      let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
+      while (end < this.words.length - 1 && !/[.!?…]+["'»”’)\]}]*$/.test(this.words[end].raw)) end++;
+      this.ttsEndIndex = end;
+      const slice = this.words.slice(startIndex, end + 1);
       const text = slice.map((w) => w.raw).join(" ");
       if (!text.trim()) return;
       const utterance = new SpeechSynthesisUtterance(text);
@@ -773,8 +905,10 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (this.isPlaying) {
       this.pause(true);
     } else {
-      if (this.currentIndex >= this.words.length - 1) {
+      if (this.completed) {
         this.currentIndex = 0;
+        this.completed = false;
+        this.updateWordDisplay();
       }
       this.play();
     }
@@ -784,7 +918,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.wordsSinceResume = 0;
     this.isRampingUp = false;
     this.activeSince = Date.now();
-    if (this.pauseCardEl) this.pauseCardEl.style.display = "none";
+    if (this.pauseCardEl) this.pauseCardEl.addClass("sr-hidden");
     (0, import_obsidian2.setIcon)(this.playPauseBtn, "pause");
     this.playPauseBtn.setAttribute("title", "\u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)");
     if (this.settings.enableTts) {
@@ -816,6 +950,10 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       }
     }
     this.updateWpmDisplay();
+    if (this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
+      this.persistProgress();
+      void this.plugin.saveSettings();
+    }
     if (triggeredByUser && this.settings.showPauseStats !== false) {
       this.renderPauseCard();
     }
@@ -839,15 +977,23 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.goToWord(targetIdx);
   }
   goToWord(index) {
-    this.currentIndex = index;
+    this.completed = false;
+    if (this.timer !== null) {
+      window.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.currentIndex = Math.max(0, Math.min(this.words.length - 1, Number.isFinite(index) ? Math.trunc(index) : 0));
     if (this.isPlaying && this.settings.enableTts) {
       this.speakFromCurrentSentence();
     }
     this.updateWordDisplay();
+    if (this.isPlaying) this.scheduleNextWord();
+    else if (this.pauseCardEl && !this.pauseCardEl.hasClass("sr-hidden")) this.renderPauseCard();
   }
   adjustWpm(delta) {
     this.currentWpm = Math.max(60, Math.min(1500, this.currentWpm + delta));
     this.updateWpmDisplay();
+    if (!this.isPlaying && this.pauseCardEl && !this.pauseCardEl.hasClass("sr-hidden")) this.renderPauseCard();
   }
   updateWpmDisplay() {
     if (!this.wpmDisplay) return;
@@ -862,7 +1008,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   scheduleNextWord() {
     if (!this.isPlaying) return;
     const stepSize = this.settings.chunkSize || 1;
-    if (this.currentIndex >= this.words.length - 1) {
+    if (this.words.length === 0) {
       this.pause(false);
       return;
     }
@@ -873,16 +1019,23 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     } else {
       this.isRampingUp = false;
     }
-    const currentWord = this.words[this.currentIndex];
-    const wordDuration = calculateWordDelayMs(effectiveWpm, currentWord.delayMultiplier);
+    const wordDuration = this.words.slice(this.currentIndex, this.currentIndex + stepSize).reduce((duration, word) => duration + calculateWordDelayMs(effectiveWpm, word.delayMultiplier), 0);
     this.updateWpmDisplay();
     this.timer = window.setTimeout(() => {
-      const prevWord = this.words[this.currentIndex];
-      this.currentIndex = Math.min(this.words.length - 1, this.currentIndex + stepSize);
-      this.sessionWordsRead += stepSize;
-      this.wordsSinceResume += stepSize;
-      if (this.isPlaying && this.settings.enableTts && prevWord && /[.!?…]+["')\]}]*$/.test(prevWord.raw)) {
-        this.speakFromCurrentSentence();
+      const consumed = Math.min(stepSize, this.words.length - this.currentIndex);
+      this.sessionWordsRead += consumed;
+      this.sessionMaxWpm = Math.max(this.sessionMaxWpm, effectiveWpm);
+      this.wordsSinceResume += consumed;
+      if (this.currentIndex + consumed >= this.words.length) {
+        this.completed = true;
+        this.currentIndex = this.words.length - 1;
+        this.updateWordDisplay();
+        this.pause(false);
+        return;
+      }
+      this.currentIndex += consumed;
+      if (this.isPlaying && this.settings.enableTts && this.currentIndex > this.ttsEndIndex) {
+        this.speakFromCurrentSentence(this.ttsEndIndex + 1);
       }
       this.maybePersistProgress();
       this.updateWordDisplay();
@@ -959,17 +1112,17 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       text: `\u041F\u0440\u043E\u0433\u0440\u0435\u0441\u0441 ${pct}% \xB7 ${this.currentIndex + 1} / ${this.words.length} \u0441\u043B\u043E\u0432`,
       cls: "sr-pause-card-progress"
     });
-    this.pauseCardEl.style.display = "block";
+    this.pauseCardEl.removeClass("sr-hidden");
   }
   updateWordDisplay() {
     const word = this.words[this.currentIndex];
     if (!word) return;
     const chunkSize = this.settings.chunkSize || 1;
     if (chunkSize > 1) {
-      this.prefixEl.style.display = "none";
-      this.focusEl.style.display = "none";
-      this.suffixEl.style.display = "none";
-      this.chunkEl.style.display = "flex";
+      this.prefixEl.addClass("sr-hidden");
+      this.focusEl.addClass("sr-hidden");
+      this.suffixEl.addClass("sr-hidden");
+      this.chunkEl.removeClass("sr-hidden");
       const chunkSlice = this.words.slice(this.currentIndex, this.currentIndex + chunkSize);
       this.chunkEl.empty();
       for (const w of chunkSlice) {
@@ -983,10 +1136,10 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         }
       }
     } else {
-      this.chunkEl.style.display = "none";
-      this.prefixEl.style.display = "inline-block";
-      this.focusEl.style.display = "inline-block";
-      this.suffixEl.style.display = "inline-block";
+      this.chunkEl.addClass("sr-hidden");
+      this.prefixEl.removeClass("sr-hidden");
+      this.focusEl.removeClass("sr-hidden");
+      this.suffixEl.removeClass("sr-hidden");
       this.prefixEl.setText(word.prefix);
       this.focusEl.setText(word.focusChar);
       this.suffixEl.setText(word.suffix);
@@ -1032,7 +1185,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   }
   async onload() {
     await this.loadSettings();
-    this.addRibbonIcon("book-open", "Speed Read Note", () => {
+    this.addRibbonIcon("book-open", "Speed read note", () => {
       this.speedReadActiveView();
     });
     this.addCommand({
@@ -1056,7 +1209,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         var _a;
         const selection = editor.getSelection();
         if (!selection || !selection.trim()) {
-          new import_obsidian3.Notice("Speed Reader: No text selected.");
+          new import_obsidian3.Notice("Speed reader: No text selected.");
           return;
         }
         new SpeedReaderModal(
@@ -1076,7 +1229,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         var _a, _b, _c;
         const content = editor.getValue();
         if (!content || !content.trim()) {
-          new import_obsidian3.Notice("Speed Reader: Active note is empty.");
+          new import_obsidian3.Notice("Speed reader: Active note is empty.");
           return;
         }
         const noteKey = ((_a = view.file) == null ? void 0 : _a.path) || ((_b = view.file) == null ? void 0 : _b.basename) || "Active Note";
@@ -1131,7 +1284,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     var _a, _b, _c, _d;
     const activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
     if (!activeView) {
-      new import_obsidian3.Notice("Speed Reader: No active Markdown note found.");
+      new import_obsidian3.Notice("Speed reader: No active Markdown note found.");
       return;
     }
     const editor = activeView.editor;
@@ -1146,7 +1299,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     } else {
       const content = editor.getValue();
       if (!content || !content.trim()) {
-        new import_obsidian3.Notice("Speed Reader: Active note is empty.");
+        new import_obsidian3.Notice("Speed reader: Active note is empty.");
         return;
       }
       const noteKey = ((_b = activeView.file) == null ? void 0 : _b.path) || ((_c = activeView.file) == null ? void 0 : _c.basename) || "Active Note";
@@ -1179,13 +1332,16 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     }
   }
   async loadSettings() {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    if (!this.settings.stats) {
-      this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats);
+    const data = await this.loadData();
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
+    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, this.settings.stats);
+    for (const key of Object.keys(DEFAULT_SETTINGS.stats)) {
+      const value = this.settings.stats[key];
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        this.settings.stats[key] = DEFAULT_SETTINGS.stats[key];
+      }
     }
-    if (!this.settings.noteProgress) {
-      this.settings.noteProgress = {};
-    }
+    this.settings.noteProgress = { ...this.settings.noteProgress };
   }
   async saveSettings() {
     await this.saveData(this.settings);

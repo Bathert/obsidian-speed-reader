@@ -15,6 +15,128 @@ import {
   buildMotivationLine,
 } from "../src/speedEngine.ts";
 
+describe("speedEngine - edge audit", () => {
+  it("handles empty and singleton navigation, clamping and progress", () => {
+    for (const total of [0, -1]) {
+      assert.strictEqual(clampIndex(10, total), 0);
+      assert.strictEqual(stepIndex(10, 100, total), 0);
+      assert.strictEqual(calculateProgressPercent(10, total), 0);
+    }
+    for (const index of [-10, 0, 1, 10]) {
+      assert.strictEqual(findPreviousSentenceStart([], index), 0);
+      assert.strictEqual(findNextSentenceStart([], index), 0);
+      assert.strictEqual(findPreviousSentenceStart([{ raw: "Only." }], index), 0);
+      assert.strictEqual(findNextSentenceStart([{ raw: "Only." }], index), 0);
+    }
+    assert.strictEqual(calculateProgressPercent(0, 1), 100);
+  });
+
+  it("stays at the final word when no next sentence exists", () => {
+    const words = [{ raw: "No" }, { raw: "boundary" }, { raw: "here" }];
+    assert.strictEqual(findNextSentenceStart(words, 0), 2);
+    assert.strictEqual(findNextSentenceStart(words, 2), 2);
+    assert.strictEqual(findPreviousSentenceStart(words, 2), 0);
+  });
+
+  it("calculates rounded fractional delays at both speed boundaries", () => {
+    assert.strictEqual(calculateWordDelayMs(60, 0.8), 800);
+    assert.strictEqual(calculateWordDelayMs(1500, 1.35), 54);
+    assert.strictEqual(calculateWordDelayMs(333), 180);
+    assert.strictEqual(calculateWordDelayMs(300, 0), 0);
+  });
+
+  it("formats remaining time at empty, negative and minute-rounding boundaries", () => {
+    assert.strictEqual(formatTimeRemaining(-1, 300), "0s left");
+    assert.strictEqual(formatTimeRemaining(60, 0), "~1m 0s left");
+    assert.strictEqual(formatTimeRemaining(59, 60), "~59s left");
+    assert.strictEqual(formatTimeRemaining(59.5, 60), "~1m 0s left");
+    assert.strictEqual(formatTimeRemaining(1, 1500), "~0s left");
+  });
+
+  it("handles disabled and default ramp lengths at each endpoint", () => {
+    assert.strictEqual(calculateRampUpWpm(400, 0, 0), 400);
+    assert.strictEqual(calculateRampUpWpm(400, 0, -1), 400);
+    assert.strictEqual(calculateRampUpWpm(400, 0), 260);
+    assert.strictEqual(calculateRampUpWpm(400, 15), 400);
+  });
+
+  it("clamps negative summary inputs without inventing elapsed time or remaining words", () => {
+    assert.deepStrictEqual(calculateSessionSummary(-5, -10, 0, -1), {
+      wordsRead: 0, readSeconds: 0, avgWpm: 0, baselineMinutes: 0, savedSeconds: 0, speedup: 0, remainingMinutes: 0,
+    });
+    assert.strictEqual(calculateSessionSummary(0, 0, 0, 120).remainingMinutes, 2);
+  });
+
+  it("rounds summary fields while using unrounded active time for actual WPM", () => {
+    assert.deepStrictEqual(calculateSessionSummary(10, 1.5, 600, 101), {
+      wordsRead: 10, readSeconds: 2, avgWpm: 400, baselineMinutes: 0.1, savedSeconds: 2, speedup: 2, remainingMinutes: 0.2,
+    });
+    assert.strictEqual(calculateTimeSavedMinutes(-1, 0), 0);
+    assert.strictEqual(calculateTimeSavedMinutes(100, 60), 0);
+  });
+
+  it("selects every motivation threshold including the target-plus-fifty boundary", () => {
+    const cases: [number, number, RegExp][] = [
+      [-1, 650, /Поехали/], [199, 650, /медленнее/], [200, 650, /Уже быстрее/],
+      [299, 650, /Уже быстрее/], [300, 650, /Хороший темп/], [449, 650, /Хороший темп/],
+      [450, 650, /Сильный ход/], [599, 650, /Сильный ход/], [600, 650, /перечитывают/],
+      [700, 650, /перечитывают/], [701, 650, /выше цели/],
+    ];
+    for (const [average, target, expected] of cases) assert.match(buildMotivationLine(average, target), expected);
+  });
+
+  it("formats durations at rounding, minute and ten-minute boundaries", () => {
+    assert.strictEqual(formatDuration(-10), "0 с");
+    assert.strictEqual(formatDuration(0.5), "1 с");
+    assert.strictEqual(formatDuration(59.4), "59 с");
+    assert.strictEqual(formatDuration(59.5), "1,0 мин");
+    assert.strictEqual(formatDuration(599), "10,0 мин");
+    assert.strictEqual(formatDuration(600), "10 мин");
+    assert.strictEqual(formatDuration(630), "11 мин");
+  });
+});
+
+describe("speedEngine - saved time boundary regressions", () => {
+  it("does not count negative elapsed time as extra time saved", () => {
+    assert.strictEqual(calculateTimeSavedMinutes(200, -60), 1);
+  });
+});
+
+describe("speedEngine - ramp boundary regressions", () => {
+  it("does not ramp below the initial speed for negative session counts", () => {
+    assert.strictEqual(calculateRampUpWpm(400, -10, 10), 260);
+  });
+});
+
+describe("speedEngine - progress boundary regressions", () => {
+  it("keeps progress inside zero to one hundred for stale indices", () => {
+    assert.strictEqual(calculateProgressPercent(-10, 5), 0);
+    assert.strictEqual(calculateProgressPercent(10, 5), 100);
+  });
+});
+
+describe("speedEngine - quoted sentence regressions", () => {
+  it("navigates across sentences ending in guillemets and curly quotes", () => {
+    const words = [{ raw: "«Первая.»" }, { raw: "“Вторая!”" }, { raw: "Третья." }];
+    assert.strictEqual(findNextSentenceStart(words, 0), 1);
+    assert.strictEqual(findPreviousSentenceStart(words, 2), 1);
+  });
+});
+
+describe("speedEngine - navigation boundary regressions", () => {
+  it("clamps stale and negative sentence positions before reading words", () => {
+    const words = [{ raw: "One." }, { raw: "Two." }, { raw: "Three" }];
+    assert.strictEqual(findPreviousSentenceStart(words, 99), 1);
+    assert.strictEqual(findNextSentenceStart(words, -99), 1);
+  });
+});
+
+describe("speedEngine - empty sentence navigation", () => {
+  it("uses zero as the next index for empty input", () => {
+    assert.strictEqual(findNextSentenceStart([], 0), 0);
+  });
+});
+
 describe("speedEngine - calculateWordDelayMs", () => {
   it("calculates exact milliseconds per word based on WPM", () => {
     assert.strictEqual(calculateWordDelayMs(60), 1000);

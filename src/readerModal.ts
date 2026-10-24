@@ -23,6 +23,8 @@ export class SpeedReaderModal extends Modal {
   private words: ParsedWord[] = [];
   private currentIndex: number = 0;
   private isPlaying: boolean = false;
+  private completed: boolean = false;
+  private ttsEndIndex: number = -1;
   private timer: number | null = null;
   private currentWpm: number;
   private settings: SpeedReaderSettings;
@@ -32,6 +34,7 @@ export class SpeedReaderModal extends Modal {
 
   // Session stats & ramp-up tracking
   private sessionWordsRead: number = 0;
+  private sessionMaxWpm: number = 0;
   // Слова, прочитанные с момента последнего старта/возобновления:
   // именно по ним считается разгон, чтобы после паузы он начинался заново.
   private wordsSinceResume: number = 0;
@@ -104,7 +107,7 @@ export class SpeedReaderModal extends Modal {
     }
 
     // Feature 3: Resume Banner (if previous progress exists)
-    const saved = this.noteKey ? this.settings.noteProgress[this.noteKey] : null;
+    const saved = this.noteKey && this.settings.rememberProgress ? this.settings.noteProgress[this.noteKey] : null;
     if (saved && saved.index > 0 && saved.index < this.words.length - 1) {
       this.resumeBannerEl = contentEl.createDiv({ cls: "sr-resume-banner" });
       const pct = Math.round(((saved.index + 1) / this.words.length) * 100);
@@ -146,7 +149,7 @@ export class SpeedReaderModal extends Modal {
     if (this.settings.redicleAlignment === "spritz") {
       frame.addClass("sr-redicle-spritz");
     }
-    frame.style.setProperty("--sr-font-size", `${this.settings.fontSize}px`);
+    frame.setCssProps({ "--sr-font-size": `${this.settings.fontSize}px` });
 
     if (this.settings.showFixationGuide && this.settings.chunkSize === 1) {
       const topGuide = frame.createDiv({ cls: "sr-guide sr-guide-top" });
@@ -165,11 +168,9 @@ export class SpeedReaderModal extends Modal {
 
     // Mode: Chunking container (2-3 words)
     this.chunkEl = this.wordBoxEl.createDiv({ cls: "sr-chunk-box" });
-    this.chunkEl.style.display = "none";
+    this.chunkEl.addClass("sr-hidden");
 
-    if (this.settings.highlightOrp) {
-      this.focusEl.style.color = this.settings.orpColor;
-    }
+    this.focusEl.setCssStyles({ color: this.settings.highlightOrp ? this.settings.orpColor : "var(--text-normal)" });
 
     if (this.settings.showFixationGuide && this.settings.chunkSize === 1) {
       const bottomGuide = frame.createDiv({ cls: "sr-guide sr-guide-bottom" });
@@ -178,7 +179,7 @@ export class SpeedReaderModal extends Modal {
 
     // Pause summary card: заполняется и показывается только на паузе
     this.pauseCardEl = contentEl.createDiv({ cls: "sr-pause-card" });
-    this.pauseCardEl.style.display = "none";
+    this.pauseCardEl.addClass("sr-hidden");
 
     // Context preview row
     this.contextEl = contentEl.createDiv({ cls: "sr-context-preview" });
@@ -207,7 +208,7 @@ export class SpeedReaderModal extends Modal {
     // Navigation Buttons
     const navGroup = controls.createDiv({ cls: "sr-btn-group" });
 
-    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: "Сначала (R)" } });
+    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: "Сначала (r)" } });
     setIcon(restartBtn, "rotate-ccw");
     restartBtn.onclick = () => this.restart();
 
@@ -248,7 +249,7 @@ export class SpeedReaderModal extends Modal {
 
     const ttsBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: "Озвучка / TTS (M)" },
+      attr: { title: "Озвучка / tts (m)" },
     });
     setIcon(ttsBtn, this.settings.enableTts ? "volume-2" : "volume-x");
     ttsBtn.onclick = () => this.toggleTts(ttsBtn);
@@ -334,14 +335,15 @@ export class SpeedReaderModal extends Modal {
     }
 
     // Feature 5: Update session analytics
-    const sessionSeconds = Math.round((Date.now() - this.sessionStartTime) / 1000);
+    const sessionSeconds = Math.round(this.activeMs / 1000);
     if (this.sessionWordsRead > 0 && sessionSeconds > 0) {
       this.settings.stats.totalWordsRead += this.sessionWordsRead;
       this.settings.stats.totalSecondsRead += sessionSeconds;
-      this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.currentWpm);
+      this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.sessionMaxWpm);
       this.settings.stats.sessionsCount += 1;
-      this.plugin.saveSettings();
     }
+    // A seek or a short session must also survive closing/restarting Obsidian.
+    void this.plugin.saveSettings();
 
     const { contentEl } = this;
     contentEl.empty();
@@ -358,15 +360,17 @@ export class SpeedReaderModal extends Modal {
     } else if (this.isPlaying) {
       this.speakFromCurrentSentence();
     }
-    this.plugin.saveSettings();
+    void this.plugin.saveSettings();
   }
 
-  private speakFromCurrentSentence() {
+  private speakFromCurrentSentence(startIndex: number = this.currentIndex) {
     if (!this.settings.enableTts || typeof window === "undefined" || !("speechSynthesis" in window)) return;
     try {
       window.speechSynthesis.cancel();
-      const end = findNextSentenceStart(this.words, this.currentIndex);
-      const slice = this.words.slice(this.currentIndex, end + 1);
+      let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
+      while (end < this.words.length - 1 && !/[.!?…]+["'»”’)\]}]*$/.test(this.words[end].raw)) end++;
+      this.ttsEndIndex = end;
+      const slice = this.words.slice(startIndex, end + 1);
       const text = slice.map((w) => w.raw).join(" ");
       if (!text.trim()) return;
 
@@ -392,8 +396,10 @@ export class SpeedReaderModal extends Modal {
     if (this.isPlaying) {
       this.pause(true);
     } else {
-      if (this.currentIndex >= this.words.length - 1) {
+      if (this.completed) {
         this.currentIndex = 0;
+        this.completed = false;
+        this.updateWordDisplay();
       }
       this.play();
     }
@@ -404,7 +410,7 @@ export class SpeedReaderModal extends Modal {
     this.wordsSinceResume = 0;
     this.isRampingUp = false;
     this.activeSince = Date.now();
-    if (this.pauseCardEl) this.pauseCardEl.style.display = "none";
+    if (this.pauseCardEl) this.pauseCardEl.addClass("sr-hidden");
     setIcon(this.playPauseBtn, "pause");
     this.playPauseBtn.setAttribute("title", "Пауза (Пробел)");
     if (this.settings.enableTts) {
@@ -441,6 +447,10 @@ export class SpeedReaderModal extends Modal {
 
     this.updateWpmDisplay();
 
+    if (this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
+      this.persistProgress();
+      void this.plugin.saveSettings();
+    }
     if (triggeredByUser && this.settings.showPauseStats !== false) {
       this.renderPauseCard();
     }
@@ -468,16 +478,24 @@ export class SpeedReaderModal extends Modal {
   }
 
   private goToWord(index: number) {
-    this.currentIndex = index;
+    this.completed = false;
+    if (this.timer !== null) {
+      window.clearTimeout(this.timer);
+      this.timer = null;
+    }
+    this.currentIndex = Math.max(0, Math.min(this.words.length - 1, Number.isFinite(index) ? Math.trunc(index) : 0));
     if (this.isPlaying && this.settings.enableTts) {
       this.speakFromCurrentSentence();
     }
     this.updateWordDisplay();
+    if (this.isPlaying) this.scheduleNextWord();
+    else if (this.pauseCardEl && !this.pauseCardEl.hasClass("sr-hidden")) this.renderPauseCard();
   }
 
   private adjustWpm(delta: number) {
     this.currentWpm = Math.max(60, Math.min(1500, this.currentWpm + delta));
     this.updateWpmDisplay();
+    if (!this.isPlaying && this.pauseCardEl && !this.pauseCardEl.hasClass("sr-hidden")) this.renderPauseCard();
   }
 
   private updateWpmDisplay() {
@@ -496,7 +514,7 @@ export class SpeedReaderModal extends Modal {
     if (!this.isPlaying) return;
 
     const stepSize = this.settings.chunkSize || 1;
-    if (this.currentIndex >= this.words.length - 1) {
+    if (this.words.length === 0) {
       this.pause(false);
       return;
     }
@@ -510,20 +528,29 @@ export class SpeedReaderModal extends Modal {
       this.isRampingUp = false;
     }
 
-    const currentWord = this.words[this.currentIndex];
-    const wordDuration = calculateWordDelayMs(effectiveWpm, currentWord.delayMultiplier);
+    const wordDuration = this.words.slice(this.currentIndex, this.currentIndex + stepSize)
+      .reduce((duration, word) => duration + calculateWordDelayMs(effectiveWpm, word.delayMultiplier), 0);
 
     this.updateWpmDisplay();
 
     this.timer = window.setTimeout(() => {
-      const prevWord = this.words[this.currentIndex];
-      this.currentIndex = Math.min(this.words.length - 1, this.currentIndex + stepSize);
-      this.sessionWordsRead += stepSize;
-      this.wordsSinceResume += stepSize;
+      const consumed = Math.min(stepSize, this.words.length - this.currentIndex);
+      this.sessionWordsRead += consumed;
+      this.sessionMaxWpm = Math.max(this.sessionMaxWpm, effectiveWpm);
+      this.wordsSinceResume += consumed;
+      if (this.currentIndex + consumed >= this.words.length) {
+        this.completed = true;
+        this.currentIndex = this.words.length - 1;
+        this.updateWordDisplay();
+        this.pause(false);
+        return;
+      }
+      this.currentIndex += consumed;
 
-      // Sentence boundary crossed: speak next sentence if TTS active
-      if (this.isPlaying && this.settings.enableTts && prevWord && /[.!?…]+["')\]}]*$/.test(prevWord.raw)) {
-        this.speakFromCurrentSentence();
+      // Queue the next unread speech segment once, including all sentences
+      // touched by a chunk; never cancel several utterances in the same tick.
+      if (this.isPlaying && this.settings.enableTts && this.currentIndex > this.ttsEndIndex) {
+        this.speakFromCurrentSentence(this.ttsEndIndex + 1);
       }
 
       this.maybePersistProgress();
@@ -612,7 +639,7 @@ export class SpeedReaderModal extends Modal {
       cls: "sr-pause-card-progress",
     });
 
-    this.pauseCardEl.style.display = "block";
+    this.pauseCardEl.removeClass("sr-hidden");
   }
 
   private updateWordDisplay() {
@@ -623,10 +650,10 @@ export class SpeedReaderModal extends Modal {
 
     if (chunkSize > 1) {
       // Feature 2: Chunking mode (2-3 words at a time)
-      this.prefixEl.style.display = "none";
-      this.focusEl.style.display = "none";
-      this.suffixEl.style.display = "none";
-      this.chunkEl.style.display = "flex";
+      this.prefixEl.addClass("sr-hidden");
+      this.focusEl.addClass("sr-hidden");
+      this.suffixEl.addClass("sr-hidden");
+      this.chunkEl.removeClass("sr-hidden");
 
       const chunkSlice = this.words.slice(this.currentIndex, this.currentIndex + chunkSize);
       this.chunkEl.empty();
@@ -644,10 +671,10 @@ export class SpeedReaderModal extends Modal {
       }
     } else {
       // Classic ORP mode (1 word)
-      this.chunkEl.style.display = "none";
-      this.prefixEl.style.display = "inline-block";
-      this.focusEl.style.display = "inline-block";
-      this.suffixEl.style.display = "inline-block";
+      this.chunkEl.addClass("sr-hidden");
+      this.prefixEl.removeClass("sr-hidden");
+      this.focusEl.removeClass("sr-hidden");
+      this.suffixEl.removeClass("sr-hidden");
 
       this.prefixEl.setText(word.prefix);
       this.focusEl.setText(word.focusChar);
