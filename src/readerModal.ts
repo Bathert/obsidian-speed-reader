@@ -81,6 +81,9 @@ export class SpeedReaderModal extends Modal {
     if (this.settings.themeMode !== "default") {
       modalEl.addClass(`sr-theme-${this.settings.themeMode}`);
     }
+    if (this.settings.readerFont && this.settings.readerFont !== "theme") {
+      modalEl.addClass(`sr-font-${this.settings.readerFont}`);
+    }
 
     if (this.words.length === 0) {
       contentEl.createEl("h3", { text: "No readable words found in selection or note." });

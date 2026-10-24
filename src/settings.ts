@@ -15,9 +15,13 @@ export interface ReaderStats {
   sessionsCount: number;
 }
 
+export type ReaderFont = "theme" | "golos" | "atkinson";
+
 export interface SpeedReaderSettings {
   defaultWpm: number;
   fontSize: number;
+  /** Шрифт окна чтения: тема Obsidian, Golos Text (кириллица) или Atkinson Hyperlegible (латиница). */
+  readerFont: ReaderFont;
   highlightOrp: boolean;
   orpColor: string;
   showFixationGuide: boolean;
@@ -59,6 +63,7 @@ export interface SpeedReaderSettings {
 export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   defaultWpm: 350,
   fontSize: 44,
+  readerFont: "theme",
   highlightOrp: true,
   orpColor: "#e63946",
   showFixationGuide: true,
@@ -183,6 +188,24 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
           .setDynamicTooltip()
           .onChange(async (value) => {
             this.plugin.settings.fontSize = value;
+            await this.plugin.saveSettings();
+          })
+      );
+
+    new Setting(containerEl)
+      .setName("Шрифт ридера")
+      .setDesc(
+        "Golos Text — крупный x-height, открытые апертуры, полная кириллица (хорошо для чтения в один столбец). " +
+        "Atkinson Hyperlegible различим по форме букв, но в нём нет кириллицы: для русских слов браузер подставит другой шрифт."
+      )
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption("theme", "Как в теме Obsidian")
+          .addOption("golos", "Golos Text (кириллица + латиница)")
+          .addOption("atkinson", "Atkinson Hyperlegible (латиница)")
+          .setValue(this.plugin.settings.readerFont)
+          .onChange(async (value) => {
+            this.plugin.settings.readerFont = value === "golos" || value === "atkinson" ? value : "theme";
             await this.plugin.saveSettings();
           })
       );
