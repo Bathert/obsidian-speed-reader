@@ -46,11 +46,11 @@ describe("speedEngine - edge audit", () => {
   });
 
   it("formats remaining time at empty, negative and minute-rounding boundaries", () => {
-    assert.strictEqual(formatTimeRemaining(-1, 300), "0s left");
-    assert.strictEqual(formatTimeRemaining(60, 0), "~1m 0s left");
-    assert.strictEqual(formatTimeRemaining(59, 60), "~59s left");
-    assert.strictEqual(formatTimeRemaining(59.5, 60), "~1m 0s left");
-    assert.strictEqual(formatTimeRemaining(1, 1500), "~0s left");
+    assert.strictEqual(formatTimeRemaining(-1, 300), "0 с");
+    assert.strictEqual(formatTimeRemaining(60, 0), "~1 мин 0 с");
+    assert.strictEqual(formatTimeRemaining(59, 60), "~59 с");
+    assert.strictEqual(formatTimeRemaining(59.5, 60), "~1 мин 0 с");
+    assert.strictEqual(formatTimeRemaining(1, 1500), "~0 с");
   });
 
   it("handles disabled and default ramp lengths at each endpoint", () => {
@@ -252,10 +252,10 @@ describe("speedEngine - progress and time remaining", () => {
   });
 
   it("formats time remaining nicely in minutes and seconds", () => {
-    assert.strictEqual(formatTimeRemaining(300, 300), "~1m 0s left");
-    assert.strictEqual(formatTimeRemaining(450, 300), "~1m 30s left");
-    assert.strictEqual(formatTimeRemaining(50, 300), "~10s left");
-    assert.strictEqual(formatTimeRemaining(0, 300), "0s left");
+    assert.strictEqual(formatTimeRemaining(300, 300), "~1 мин 0 с");
+    assert.strictEqual(formatTimeRemaining(450, 300), "~1 мин 30 с");
+    assert.strictEqual(formatTimeRemaining(50, 300), "~10 с");
+    assert.strictEqual(formatTimeRemaining(0, 300), "0 с");
   });
 });
 

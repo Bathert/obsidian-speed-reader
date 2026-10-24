@@ -1,6 +1,6 @@
 {
   "name": "obsidian-speed-reader",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Speed read your notes using Spritz-style RSVP with Optimal Recognition Point (ORP), smart pacing, chunking, and text-to-speech.",
   "main": "main.js",
   "scripts": {

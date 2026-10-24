@@ -74,7 +74,7 @@ test('all declarative controls round-trip their defaults and persist valid alter
     else if (control.type === 'dropdown') next = Object.keys(control.options).at(-1);
     else next = ' #123456 ';
     await tab.setControlValue(control.key, next);
-    const expected = ['chunkSize', 'orpWidth'].includes(control.key) ? Number(next) : control.type === 'text' ? next.trim() : next;
+    const expected = ['chunkSize', 'orpWidth', 'stepWordCount'].includes(control.key) ? Number(next) : control.type === 'text' ? next.trim() : next;
     assert.equal(plugin.settings[control.key], expected, control.key);
     assert.equal(snapshots.at(-1)[control.key], expected, `persisted ${control.key}`);
   }
@@ -117,4 +117,12 @@ test('settings normalization handles invalid dropdown values and blank colors', 
   assert.equal(plugin.settings.chunkSize, 1);
   assert.equal(plugin.settings.readerFont, 'theme');
   assert.equal(plugin.settings.orpColor, DEFAULT_SETTINGS.orpColor);
+});
+
+test('settings expose theme, arrow step and pause pacing controls', () => {
+  const { tab } = make();
+  const keys = tab.getSettingDefinitions().flatMap(group => group.items).filter(item => item.control).map(item => item.control.key);
+  for (const key of ['themeMode', 'stepWordCount', 'pauseOnPunctuation', 'sentencePauseMultiplier', 'commaPauseMultiplier', 'paragraphPauseMultiplier']) {
+    assert.ok(keys.includes(key), `missing control ${key}`);
+  }
 });

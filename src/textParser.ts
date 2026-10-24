@@ -3,6 +3,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+import { isSentenceEnd } from "./speedEngine.ts";
+
 export interface ParsedWord {
   raw: string;
   prefix: string;
@@ -37,6 +39,9 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
   const replace = (pattern: RegExp, replacement: string): void => {
+    // On a clean note most patterns never match: skip copying the whole
+    // offset array for each of them.
+    if (!new RegExp(pattern.source, pattern.flags.replace("g", "")).test(cleaned)) return;
     const nextOffsets: number[] = [];
     const appendOffsets = (start: number, end: number): void => {
       for (let index = start; index < end; index++) nextOffsets.push(offsets[index]);
@@ -61,8 +66,12 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
     offsets = nextOffsets;
   };
 
-  // Remove YAML frontmatter
-  replace(/^---[\s\S]*?---\s*/, "");
+  // Remove YAML frontmatter: a delimited block that actually holds YAML keys,
+  // so a note that starts with a horizontal rule keeps its first paragraph.
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(cleaned);
+  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
+    replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+  }
 
   // Remove code blocks
   replace(/```[\s\S]*?```/g, "");
@@ -80,15 +89,16 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   // Replace Markdown links [text](url) -> text
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 
-  // Remove HTML tags
-  replace(/<[^>]+>/g, "");
+  // Remove HTML tags, but not prose like "a < b and b > c".
+  replace(/<\/?[a-zA-Z][^>]*>/g, "");
 
   // Remove header hashes (#, ##, etc.) but keep title words
   replace(/^#{1,6}\s+/gm, "");
 
   // Remove bold, italic, strikethrough: **, *, __, _, ~~
   replace(/(\*\*|__)(.*?)\1/g, "$2");
-  replace(/(\*|_)(.*?)\1/g, "$2");
+  replace(/\*([^*\n]+)\*/g, "$1");
+  replace(/(?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}])/gu, "$1");
   replace(/~~(.*?)~~/g, "$1");
 
   // Remove blockquotes (>)
@@ -242,7 +252,7 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = options.paragraphPauseMultiplier ?? 2.5;
-        } else if (/[.!?…]+["'»”’）)\]}]*$/.test(token)) {
+        } else if (isSentenceEnd(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
@@ -282,34 +292,3 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
   return result;
 }
 
-export interface WordChunk {
-  raw: string;
-  words: ParsedWord[];
-  delayMultiplier: number;
-}
-
-/**
- * Groups parsed words into multi-word chunks (chunking mode: 1, 2, or 3 words).
- */
-export function groupIntoChunks(words: ParsedWord[], chunkSize: number): WordChunk[] {
-  chunkSize = Number.isFinite(chunkSize) ? Math.max(1, Math.floor(chunkSize)) : 1;
-  if (chunkSize <= 1) {
-    return words.map((w) => ({
-      raw: w.raw,
-      words: [w],
-      delayMultiplier: w.delayMultiplier,
-    }));
-  }
-
-  const chunks: WordChunk[] = [];
-  for (let i = 0; i < words.length; i += chunkSize) {
-    const slice = words.slice(i, i + chunkSize);
-    const maxDelay = Math.max(...slice.map((w) => w.delayMultiplier));
-    chunks.push({
-      raw: slice.map((w) => w.raw).join(" "),
-      words: slice,
-      delayMultiplier: maxDelay,
-    });
-  }
-  return chunks;
-}

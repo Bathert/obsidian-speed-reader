@@ -50,15 +50,15 @@ function calculateProgressPercent(currentIndex, totalWords) {
   return Math.max(0, Math.min(100, Math.round((currentIndex + 1) / totalWords * 100)));
 }
 function formatTimeRemaining(remainingWords, wpm) {
-  if (remainingWords <= 0) return "0s left";
+  if (remainingWords <= 0) return "0 \u0441";
   const safeWpm = Math.max(60, wpm);
   const totalSeconds = Math.round(remainingWords / safeWpm * 60);
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
   if (mins > 0) {
-    return `~${mins}m ${secs}s left`;
+    return `~${mins} \u043C\u0438\u043D ${secs} \u0441`;
   }
-  return `~${secs}s left`;
+  return `~${secs} \u0441`;
 }
 function calculateRampUpWpm(targetWpm, wordsReadInSession, rampUpWords = 15) {
   if (rampUpWords <= 0 || wordsReadInSession >= rampUpWords) {
@@ -71,11 +71,11 @@ function findPreviousSentenceStart(words, currentIndex) {
   currentIndex = clampIndex(currentIndex, words.length);
   if (currentIndex <= 0 || words.length === 0) return 0;
   let searchStart = currentIndex - 1;
-  if (searchStart >= 0 && /[.!?…]+["'»”’）)\]}]*$/.test(words[searchStart].raw)) {
+  if (searchStart >= 0 && isSentenceEnd(words[searchStart].raw)) {
     searchStart--;
   }
   for (let i = searchStart; i >= 0; i--) {
-    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
+    if (isSentenceEnd(words[i].raw)) {
       return i + 1;
     }
   }
@@ -86,7 +86,7 @@ function findNextSentenceStart(words, currentIndex) {
   if (words.length === 0) return 0;
   if (currentIndex >= words.length - 1) return words.length - 1;
   for (let i = currentIndex; i < words.length - 1; i++) {
-    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
+    if (isSentenceEnd(words[i].raw)) {
       return i + 1;
     }
   }
@@ -131,6 +131,9 @@ function formatDuration(seconds) {
   const minutes = safe / 60;
   const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
   return `${text} \u043C\u0438\u043D`;
+}
+function isSentenceEnd(raw) {
+  return /[.!?…]+["'»”’)\]}）]*$/.test(raw);
 }
 
 // src/settings.ts
@@ -183,7 +186,7 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
   }
   getControlValue(key) {
     const value = super.getControlValue(key);
-    return key === "orpWidth" || key === "chunkSize" ? String(value) : value;
+    return key === "orpWidth" || key === "chunkSize" || key === "stepWordCount" ? String(value) : value;
   }
   async setControlValue(key, value) {
     var _a;
@@ -207,6 +210,11 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
       value = value === "golos" || value === "atkinson" ? value : "theme";
     } else if (key === "redicleAlignment") {
       value = value === "center" ? "center" : "spritz";
+    } else if (key === "themeMode") {
+      value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "stepWordCount") {
+      const step = parseInt(String(value), 10);
+      value = Number.isFinite(step) ? Math.max(1, Math.min(50, step)) : DEFAULT_SETTINGS.stepWordCount;
     }
     await super.setControlValue(key, value);
   }
@@ -381,10 +389,34 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
             control: { type: "slider", key: "rewindOnPauseWords", min: 1, max: 10, step: 1, defaultValue: DEFAULT_SETTINGS.rewindOnPauseWords }
           },
           {
+            name: "\u041F\u0430\u0443\u0437\u044B \u043D\u0430 \u0437\u043D\u0430\u043A\u0430\u0445 \u043F\u0440\u0435\u043F\u0438\u043D\u0430\u043D\u0438\u044F",
+            desc: "\u0423\u0434\u043B\u0438\u043D\u044F\u0442\u044C \u043F\u043E\u043A\u0430\u0437 \u0441\u043B\u043E\u0432 \u0441 \u0442\u043E\u0447\u043A\u043E\u0439, \u0437\u0430\u043F\u044F\u0442\u043E\u0439, \u0432\u043E\u043F\u0440\u043E\u0441\u043E\u043C \u0438 \u0432\u043E\u0441\u043A\u043B\u0438\u0446\u0430\u043D\u0438\u0435\u043C",
+            aliases: ["pauseOnPunctuation"],
+            control: { type: "toggle", key: "pauseOnPunctuation", defaultValue: DEFAULT_SETTINGS.pauseOnPunctuation }
+          },
+          {
+            name: "\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u043A\u043E\u043D\u0446\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F",
+            desc: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0434\u043E\u043B\u044C\u0448\u0435 \u0434\u0435\u0440\u0436\u0430\u0442\u044C \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0435 \u0441\u043B\u043E\u0432\u043E \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u044F",
+            aliases: ["sentencePauseMultiplier"],
+            control: { type: "slider", key: "sentencePauseMultiplier", min: 1, max: 4, step: 0.5, defaultValue: DEFAULT_SETTINGS.sentencePauseMultiplier }
+          },
+          {
+            name: "\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u0437\u0430\u043F\u044F\u0442\u043E\u0439",
+            desc: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0434\u043E\u043B\u044C\u0448\u0435 \u0434\u0435\u0440\u0436\u0430\u0442\u044C \u0441\u043B\u043E\u0432\u043E \u043F\u0435\u0440\u0435\u0434 \u0437\u0430\u043F\u044F\u0442\u043E\u0439",
+            aliases: ["commaPauseMultiplier"],
+            control: { type: "slider", key: "commaPauseMultiplier", min: 1, max: 3, step: 0.2, defaultValue: DEFAULT_SETTINGS.commaPauseMultiplier }
+          },
+          {
             name: "\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0430\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432",
             desc: "\u0414\u0435\u043B\u0430\u0442\u044C \u0434\u043E\u043F\u043E\u043B\u043D\u0438\u0442\u0435\u043B\u044C\u043D\u0443\u044E \u043F\u0430\u0443\u0437\u0443 \u0432 \u043A\u043E\u043D\u0446\u0435 \u0441\u043C\u044B\u0441\u043B\u043E\u0432\u044B\u0445 \u0430\u0431\u0437\u0430\u0446\u0435\u0432 \u0434\u043B\u044F \u043E\u0441\u043C\u044B\u0441\u043B\u0435\u043D\u0438\u044F \u043C\u044B\u0441\u043B\u0438",
             aliases: ["pauseOnParagraphs"],
             control: { type: "toggle", key: "pauseOnParagraphs", defaultValue: DEFAULT_SETTINGS.pauseOnParagraphs }
+          },
+          {
+            name: "\u041F\u0430\u0443\u0437\u0430 \u043D\u0430 \u0433\u0440\u0430\u043D\u0438\u0446\u0435 \u0430\u0431\u0437\u0430\u0446\u0430",
+            desc: "\u0412\u043E \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u0440\u0430\u0437 \u0434\u043E\u043B\u044C\u0448\u0435 \u0434\u0435\u0440\u0436\u0430\u0442\u044C \u043F\u043E\u0441\u043B\u0435\u0434\u043D\u0435\u0435 \u0441\u043B\u043E\u0432\u043E \u0430\u0431\u0437\u0430\u0446\u0430",
+            aliases: ["paragraphPauseMultiplier"],
+            control: { type: "slider", key: "paragraphPauseMultiplier", min: 1, max: 5, step: 0.5, defaultValue: DEFAULT_SETTINGS.paragraphPauseMultiplier }
           },
           {
             name: "\u0423\u043C\u043D\u044B\u0435 \u043F\u0430\u0443\u0437\u044B \u043D\u0430 \u0447\u0438\u0441\u043B\u0430\u0445 \u0438 \u0430\u0431\u0431\u0440\u0435\u0432\u0438\u0430\u0442\u0443\u0440\u0430\u0445",
@@ -398,6 +430,38 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         type: "group",
         heading: "\u0420\u0435\u0436\u0438\u043C\u044B \u043E\u0442\u043E\u0431\u0440\u0430\u0436\u0435\u043D\u0438\u044F \u0438 \u0427\u0430\u043D\u043A\u0438\u043D\u0433 (Display Modes)",
         items: [
+          {
+            name: "\u0422\u0435\u043C\u0430 \u043E\u043A\u043D\u0430 \u0447\u0442\u0435\u043D\u0438\u044F",
+            desc: "\u0426\u0432\u0435\u0442 \u0444\u043E\u043D\u0430 \u0438 \u0442\u0435\u043A\u0441\u0442\u0430 \u0432 \u043E\u043A\u043D\u0435 \u0441\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F",
+            aliases: ["themeMode", "theme"],
+            control: {
+              type: "dropdown",
+              key: "themeMode",
+              defaultValue: String(DEFAULT_SETTINGS.themeMode),
+              options: {
+                "default": "\u041A\u0430\u043A \u0432 Obsidian",
+                "dark": "\u0422\u0451\u043C\u043D\u0430\u044F",
+                "light": "\u0421\u0432\u0435\u0442\u043B\u0430\u044F",
+                "sepia": "\u0421\u0435\u043F\u0438\u044F"
+              }
+            }
+          },
+          {
+            name: "\u0428\u0430\u0433 \u043F\u0435\u0440\u0435\u043C\u043E\u0442\u043A\u0438 \u0441\u0442\u0440\u0435\u043B\u043A\u0430\u043C\u0438",
+            desc: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u0441\u043B\u043E\u0432 \u043F\u0440\u043E\u043F\u0443\u0441\u043A\u0430\u0442\u044C \u043F\u043E \u043A\u043B\u0430\u0432\u0438\u0448\u0430\u043C \u2190 \u0438 \u2192",
+            aliases: ["stepWordCount"],
+            control: {
+              type: "dropdown",
+              key: "stepWordCount",
+              defaultValue: String(DEFAULT_SETTINGS.stepWordCount),
+              options: {
+                "5": "5 \u0441\u043B\u043E\u0432",
+                "10": "10 \u0441\u043B\u043E\u0432",
+                "25": "25 \u0441\u043B\u043E\u0432",
+                "50": "50 \u0441\u043B\u043E\u0432"
+              }
+            }
+          },
           {
             name: "\u0420\u0430\u0437\u043C\u0435\u0440 \u0447\u0430\u043D\u043A\u0430 (\u0441\u043B\u043E\u0432 \u0437\u0430 \u0440\u0430\u0437)",
             desc: "\u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C \u043F\u043E 1 \u0441\u043B\u043E\u0432\u0443 (\u043A\u043B\u0430\u0441\u0441\u0438\u0447\u0435\u0441\u043A\u0438\u0439 RSVP \u0441 ORP) \u0438\u043B\u0438 \u043F\u043E 2\u20133 \u0441\u043B\u043E\u0432\u0430 \u0434\u043B\u044F \u043E\u043F\u044B\u0442\u043D\u044B\u0445 \u0447\u0442\u0435\u0446\u043E\u0432",
@@ -463,6 +527,7 @@ function cleanMarkdownWithOffsets(text) {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
   const replace = (pattern, replacement) => {
+    if (!new RegExp(pattern.source, pattern.flags.replace("g", "")).test(cleaned)) return;
     const nextOffsets = [];
     const appendOffsets = (start2, end2) => {
       for (let index = start2; index < end2; index++) nextOffsets.push(offsets[index]);
@@ -484,17 +549,21 @@ function cleanMarkdownWithOffsets(text) {
     appendOffsets(end, offsets.length);
     offsets = nextOffsets;
   };
-  replace(/^---[\s\S]*?---\s*/, "");
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(cleaned);
+  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
+    replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+  }
   replace(/```[\s\S]*?```/g, "");
   replace(/`([^`]+)`/g, "$1");
   replace(/!\[\[.*?\]\]/g, "");
   replace(/!\[.*?\]\(.*?\)/g, "");
   replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  replace(/<[^>]+>/g, "");
+  replace(/<\/?[a-zA-Z][^>]*>/g, "");
   replace(/^#{1,6}\s+/gm, "");
   replace(/(\*\*|__)(.*?)\1/g, "$2");
-  replace(/(\*|_)(.*?)\1/g, "$2");
+  replace(/\*([^*\n]+)\*/g, "$1");
+  replace(/(?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}])/gu, "$1");
   replace(/~~(.*?)~~/g, "$1");
   replace(/^\s*>\s*/gm, "");
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
@@ -592,7 +661,7 @@ function parseWords(text, options) {
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = (_b = options.paragraphPauseMultiplier) != null ? _b : 2.5;
-        } else if (/[.!?…]+["'»”’）)\]}]*$/.test(token)) {
+        } else if (isSentenceEnd(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
@@ -638,10 +707,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
     this.sessionMaxWpm = 0;
+    /**
+     * True once the user actually played or moved through the text. Closing a
+     * freshly opened reader must not overwrite saved progress with word 1.
+     */
+    this.hasInteracted = false;
     // Слова, прочитанные с момента последнего старта/возобновления:
     // именно по ним считается разгон, чтобы после паузы он начинался заново.
     this.wordsSinceResume = 0;
-    this.sessionStartTime = Date.now();
     this.isRampingUp = false;
     this.lastPersistedIndex = 0;
     // Активное время чтения без пауз — база для честной средней скорости.
@@ -850,10 +923,12 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   onClose() {
     this.pause(false);
     this.stopTts();
-    this.persistProgress();
-    const word = this.words[this.currentIndex];
-    if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
-      this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
+    if (this.hasInteracted) {
+      this.persistProgress();
+      const word = this.words[this.currentIndex];
+      if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
+        this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
+      }
     }
     const sessionSeconds = Math.round(this.activeMs / 1e3);
     if (this.sessionWordsRead > 0 && sessionSeconds > 0) {
@@ -862,7 +937,9 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.sessionMaxWpm);
       this.settings.stats.sessionsCount += 1;
     }
-    void this.plugin.saveSettings();
+    if (this.hasInteracted) {
+      void this.plugin.saveSettings();
+    }
     const { contentEl } = this;
     contentEl.empty();
   }
@@ -884,7 +961,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     try {
       window.speechSynthesis.cancel();
       let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
-      while (end < this.words.length - 1 && !/[.!?…]+["'»”’)\]}]*$/.test(this.words[end].raw)) end++;
+      while (end < this.words.length - 1 && !isSentenceEnd(this.words[end].raw)) end++;
       this.ttsEndIndex = end;
       const slice = this.words.slice(startIndex, end + 1);
       const text = slice.map((w) => w.raw).join(" ");
@@ -917,6 +994,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   play() {
     this.isPlaying = true;
+    this.hasInteracted = true;
     this.wordsSinceResume = 0;
     this.isRampingUp = false;
     this.activeSince = Date.now();
@@ -944,15 +1022,18 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       (0, import_obsidian2.setIcon)(this.playPauseBtn, "play");
       this.playPauseBtn.setAttribute("title", "\u0421\u0442\u0430\u0440\u0442 (\u041F\u0440\u043E\u0431\u0435\u043B)");
     }
-    if (triggeredByUser && this.settings.rewindOnPause && this.sessionWordsRead >= 3) {
-      const newIdx = Math.max(0, this.currentIndex - this.settings.rewindOnPauseWords);
+    if (triggeredByUser && this.settings.rewindOnPause && this.wordsSinceResume >= 3) {
+      const rewind = Math.min(this.settings.rewindOnPauseWords, this.wordsSinceResume);
+      const newIdx = Math.max(0, this.currentIndex - rewind);
       if (newIdx !== this.currentIndex) {
+        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - (this.currentIndex - newIdx));
+        this.wordsSinceResume = Math.max(0, this.wordsSinceResume - rewind);
         this.currentIndex = newIdx;
         this.updateWordDisplay();
       }
     }
     this.updateWpmDisplay();
-    if (this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
+    if (this.hasInteracted && this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
       this.persistProgress();
       void this.plugin.saveSettings();
     }
@@ -980,9 +1061,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   goToWord(index) {
     this.completed = false;
+    this.hasInteracted = true;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
+    }
+    if (this.isPlaying) {
+      this.accumulateActiveTime();
+      this.activeSince = Date.now();
     }
     this.currentIndex = Math.max(0, Math.min(this.words.length - 1, Number.isFinite(index) ? Math.trunc(index) : 0));
     if (this.isPlaying && this.settings.enableTts) {
@@ -1031,7 +1117,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       if (this.currentIndex + consumed >= this.words.length) {
         this.completed = true;
         this.currentIndex = this.words.length - 1;
-        this.updateWordDisplay();
+        this.updateProgress();
         this.pause(false);
         return;
       }
@@ -1146,6 +1232,10 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       this.focusEl.setText(word.focusChar);
       this.suffixEl.setText(word.suffix);
     }
+    this.updateProgress();
+  }
+  /** Progress bar, label, time left and context, without re-rendering the word. */
+  updateProgress() {
     if (this.progressBar) {
       this.progressBar.value = `${this.currentIndex}`;
     }

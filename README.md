@@ -90,7 +90,7 @@ The settings tab uses the declarative settings API, so its controls appear in Ob
 
 Use Node.js 24 or newer and npm. `npm ci` installs dependencies; `npm run check` type-checks, lints, tests, and builds; `npm run test:coverage` prints coverage for the pure logic modules.
 
-The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.0.3`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
+The registered plugin ID is `rsvp-speed-reader` and must remain unchanged. To publish, commit the changes and push a tag matching the version in `manifest.json` (for example `1.0.4`, without a `v` prefix). The release workflow verifies the metadata, builds from that tag, creates GitHub artifact attestations for the assets, and publishes `main.js`, `manifest.json`, and `styles.css`.
 
 ## License
 

@@ -171,3 +171,31 @@ test('reader hides the host modal title bar through a scoped class', () => {
   const h = readerHarness();
   assert.equal(h.modal.modalEl.querySelector('.modal-header').classes.has('sr-header-hidden'), true);
 });
+
+test('closing an untouched reader keeps saved progress and leaves the cursor alone', () => {
+  const h = readerHarness(undefined, { noteProgress: { 'book.md': { index: 3, totalWords: 6, timestamp: 1 } } });
+  h.modal.onClose();
+  assert.equal(h.settings.noteProgress['book.md'].index, 3, 'saved position must survive');
+  assert.equal(h.synced.length, 0, 'cursor must not jump to the first word');
+  assert.equal(h.saves.length, 0, 'nothing to persist without interaction');
+});
+
+test('repeated start and pause neither rewinds through the text nor double counts', () => {
+  const h = readerHarness('a b c d e f g h i j', { enableRampUp: false });
+  h.modal.togglePlay(); for (let i = 0; i < 6; i++) h.tick();
+  h.modal.pause(true);
+  const afterFirstPause = { index: h.modal.currentIndex, words: h.modal.sessionWordsRead };
+  assert.ok(afterFirstPause.index < 6, 'one pause rewinds a few words');
+  h.modal.togglePlay(); h.modal.pause(true);
+  assert.equal(h.modal.currentIndex, afterFirstPause.index, 'pause without reading must not rewind again');
+  assert.equal(h.modal.sessionWordsRead, afterFirstPause.words, 'rewound words must not be counted twice');
+});
+
+test('final chunk stays on screen when playback completes', () => {
+  const h = readerHarness('один два три четыре пять шесть', { chunkSize: 3, enableRampUp: false, spritzVariableTiming: false });
+  h.modal.togglePlay(); h.tick(); h.tick();
+  assert.equal(h.modal.isPlaying, false);
+  assert.equal(h.modal.chunkEl.children.length, 3, 'last chunk must not collapse to one word');
+  assert.equal(h.modal.chunkEl.textContent, 'четырепятьшесть');
+  assert.match(h.modal.progressLabel.textContent, /^6 \/ 6/);
+});

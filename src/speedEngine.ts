@@ -28,16 +28,16 @@ export function calculateProgressPercent(currentIndex: number, totalWords: numbe
 }
 
 export function formatTimeRemaining(remainingWords: number, wpm: number): string {
-  if (remainingWords <= 0) return "0s left";
+  if (remainingWords <= 0) return "0 с";
   const safeWpm = Math.max(60, wpm);
   const totalSeconds = Math.round((remainingWords / safeWpm) * 60);
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
 
   if (mins > 0) {
-    return `~${mins}m ${secs}s left`;
+    return `~${mins} мин ${secs} с`;
   }
-  return `~${secs}s left`;
+  return `~${secs} с`;
 }
 
 /**
@@ -68,12 +68,12 @@ export function findPreviousSentenceStart(
 
   // If already at the first word of a sentence, skip back into the previous sentence
   let searchStart = currentIndex - 1;
-  if (searchStart >= 0 && /[.!?…]+["'»”’）)\]}]*$/.test(words[searchStart].raw)) {
+  if (searchStart >= 0 && isSentenceEnd(words[searchStart].raw)) {
     searchStart--;
   }
 
   for (let i = searchStart; i >= 0; i--) {
-    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
+    if (isSentenceEnd(words[i].raw)) {
       return i + 1;
     }
   }
@@ -92,7 +92,7 @@ export function findNextSentenceStart(
   if (currentIndex >= words.length - 1) return words.length - 1;
 
   for (let i = currentIndex; i < words.length - 1; i++) {
-    if (/[.!?…]+["'»”’）)\]}]*$/.test(words[i].raw)) {
+    if (isSentenceEnd(words[i].raw)) {
       return i + 1;
     }
   }
@@ -174,4 +174,12 @@ export function formatDuration(seconds: number): string {
   const minutes = safe / 60;
   const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
   return `${text} мин`;
+}
+
+/**
+ * A sentence ends with terminal punctuation, optionally followed by closing
+ * quotes or brackets, including Russian and full-width variants.
+ */
+export function isSentenceEnd(raw: string): boolean {
+  return /[.!?…]+["'»”’)\]}）]*$/.test(raw);
 }

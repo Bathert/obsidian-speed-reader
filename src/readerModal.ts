@@ -17,6 +17,7 @@ import {
   findNextSentenceStart,
   findPreviousSentenceStart,
   formatTimeRemaining,
+  isSentenceEnd,
   stepIndex,
 } from "./speedEngine";
 
@@ -40,10 +41,14 @@ export class SpeedReaderModal extends Modal {
   // Session stats & ramp-up tracking
   private sessionWordsRead: number = 0;
   private sessionMaxWpm: number = 0;
+  /**
+   * True once the user actually played or moved through the text. Closing a
+   * freshly opened reader must not overwrite saved progress with word 1.
+   */
+  private hasInteracted: boolean = false;
   // Слова, прочитанные с момента последнего старта/возобновления:
   // именно по ним считается разгон, чтобы после паузы он начинался заново.
   private wordsSinceResume: number = 0;
-  private sessionStartTime: number = Date.now();
   private isRampingUp: boolean = false;
   private lastPersistedIndex: number = 0;
   // Активное время чтения без пауз — база для честной средней скорости.
@@ -334,13 +339,16 @@ export class SpeedReaderModal extends Modal {
     this.pause(false);
     this.stopTts();
 
-    // Feature 3: Save progress & cursor sync
-    this.persistProgress();
+    // A seek or a read session must survive closing/restarting Obsidian, but a
+    // reader closed without any interaction must keep the previous position.
+    if (this.hasInteracted) {
+      this.persistProgress();
 
-    // Feature 3: Sync cursor in editor
-    const word = this.words[this.currentIndex];
-    if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
-      this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
+      // Sync the editor cursor to the word actually being read.
+      const word = this.words[this.currentIndex];
+      if (this.settings.syncCursorOnClose && this.onSyncCursor && word) {
+        this.onSyncCursor(this.currentIndex, word.raw, word.charOffset);
+      }
     }
 
     // Feature 5: Update session analytics
@@ -351,8 +359,9 @@ export class SpeedReaderModal extends Modal {
       this.settings.stats.maxWpm = Math.max(this.settings.stats.maxWpm, this.sessionMaxWpm);
       this.settings.stats.sessionsCount += 1;
     }
-    // A seek or a short session must also survive closing/restarting Obsidian.
-    void this.plugin.saveSettings();
+    if (this.hasInteracted) {
+      void this.plugin.saveSettings();
+    }
 
     const { contentEl } = this;
     contentEl.empty();
@@ -377,7 +386,7 @@ export class SpeedReaderModal extends Modal {
     try {
       window.speechSynthesis.cancel();
       let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
-      while (end < this.words.length - 1 && !/[.!?…]+["'»”’)\]}]*$/.test(this.words[end].raw)) end++;
+      while (end < this.words.length - 1 && !isSentenceEnd(this.words[end].raw)) end++;
       this.ttsEndIndex = end;
       const slice = this.words.slice(startIndex, end + 1);
       const text = slice.map((w) => w.raw).join(" ");
@@ -416,6 +425,7 @@ export class SpeedReaderModal extends Modal {
 
   private play() {
     this.isPlaying = true;
+    this.hasInteracted = true;
     this.wordsSinceResume = 0;
     this.isRampingUp = false;
     this.activeSince = Date.now();
@@ -445,10 +455,15 @@ export class SpeedReaderModal extends Modal {
       this.playPauseBtn.setAttribute("title", "Старт (Пробел)");
     }
 
-    // Rewind on pause if user pressed pause and read at least some words
-    if (triggeredByUser && this.settings.rewindOnPause && this.sessionWordsRead >= 3) {
-      const newIdx = Math.max(0, this.currentIndex - this.settings.rewindOnPauseWords);
+    // Rewind only over words that were actually read since the last resume:
+    // repeatedly starting and pausing must not walk the text backwards, and
+    // re-reading a rewound word must not inflate the session counters.
+    if (triggeredByUser && this.settings.rewindOnPause && this.wordsSinceResume >= 3) {
+      const rewind = Math.min(this.settings.rewindOnPauseWords, this.wordsSinceResume);
+      const newIdx = Math.max(0, this.currentIndex - rewind);
       if (newIdx !== this.currentIndex) {
+        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - (this.currentIndex - newIdx));
+        this.wordsSinceResume = Math.max(0, this.wordsSinceResume - rewind);
         this.currentIndex = newIdx;
         this.updateWordDisplay();
       }
@@ -456,7 +471,7 @@ export class SpeedReaderModal extends Modal {
 
     this.updateWpmDisplay();
 
-    if (this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
+    if (this.hasInteracted && this.words.length > 0 && this.noteKey && this.settings.rememberProgress) {
       this.persistProgress();
       void this.plugin.saveSettings();
     }
@@ -488,9 +503,16 @@ export class SpeedReaderModal extends Modal {
 
   private goToWord(index: number) {
     this.completed = false;
+    this.hasInteracted = true;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
+    }
+    // Seeking is not reading: stop the active clock so dragging the progress
+    // bar does not lower the measured reading speed.
+    if (this.isPlaying) {
+      this.accumulateActiveTime();
+      this.activeSince = Date.now();
     }
     this.currentIndex = Math.max(0, Math.min(this.words.length - 1, Number.isFinite(index) ? Math.trunc(index) : 0));
     if (this.isPlaying && this.settings.enableTts) {
@@ -550,7 +572,8 @@ export class SpeedReaderModal extends Modal {
       if (this.currentIndex + consumed >= this.words.length) {
         this.completed = true;
         this.currentIndex = this.words.length - 1;
-        this.updateWordDisplay();
+        // Keep the final chunk on screen: only the progress moves forward.
+        this.updateProgress();
         this.pause(false);
         return;
       }
@@ -690,12 +713,15 @@ export class SpeedReaderModal extends Modal {
       this.suffixEl.setText(word.suffix);
     }
 
-    // Update progress bar
+    this.updateProgress();
+  }
+
+  /** Progress bar, label, time left and context, without re-rendering the word. */
+  private updateProgress() {
     if (this.progressBar) {
       this.progressBar.value = `${this.currentIndex}`;
     }
 
-    // Update progress label: 42 / 300 (14%)
     const pct = calculateProgressPercent(this.currentIndex, this.words.length);
     if (this.progressLabel) {
       this.progressLabel.setText(`${this.currentIndex + 1} / ${this.words.length} (${pct}%)`);

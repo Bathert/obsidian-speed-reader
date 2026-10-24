@@ -129,7 +129,7 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
 
   getControlValue(key: string): unknown {
     const value = super.getControlValue(key);
-    return key === "orpWidth" || key === "chunkSize" ? String(value) : value;
+    return key === "orpWidth" || key === "chunkSize" || key === "stepWordCount" ? String(value) : value;
   }
 
   async setControlValue(key: string, value: unknown): Promise<void> {
@@ -152,6 +152,11 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
       value = value === "golos" || value === "atkinson" ? value : "theme";
     } else if (key === "redicleAlignment") {
       value = value === "center" ? "center" : "spritz";
+    } else if (key === "themeMode") {
+      value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "stepWordCount") {
+      const step = parseInt(String(value), 10);
+      value = Number.isFinite(step) ? Math.max(1, Math.min(50, step)) : DEFAULT_SETTINGS.stepWordCount;
     }
     await super.setControlValue(key, value);
   }
@@ -316,10 +321,34 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
             control: { type: "slider", key: "rewindOnPauseWords", min: 1, max: 10, step: 1, defaultValue: DEFAULT_SETTINGS.rewindOnPauseWords },
           },
           {
+            name: "Паузы на знаках препинания",
+            desc: "Удлинять показ слов с точкой, запятой, вопросом и восклицанием",
+            aliases: ["pauseOnPunctuation"],
+            control: { type: "toggle", key: "pauseOnPunctuation", defaultValue: DEFAULT_SETTINGS.pauseOnPunctuation },
+          },
+          {
+            name: "Пауза на конце предложения",
+            desc: "Во сколько раз дольше держать последнее слово предложения",
+            aliases: ["sentencePauseMultiplier"],
+            control: { type: "slider", key: "sentencePauseMultiplier", min: 1, max: 4, step: 0.5, defaultValue: DEFAULT_SETTINGS.sentencePauseMultiplier },
+          },
+          {
+            name: "Пауза на запятой",
+            desc: "Во сколько раз дольше держать слово перед запятой",
+            aliases: ["commaPauseMultiplier"],
+            control: { type: "slider", key: "commaPauseMultiplier", min: 1, max: 3, step: 0.2, defaultValue: DEFAULT_SETTINGS.commaPauseMultiplier },
+          },
+          {
             name: "Пауза на границах абзацев",
             desc: "Делать дополнительную паузу в конце смысловых абзацев для осмысления мысли",
             aliases: ["pauseOnParagraphs"],
             control: { type: "toggle", key: "pauseOnParagraphs", defaultValue: DEFAULT_SETTINGS.pauseOnParagraphs },
+          },
+          {
+            name: "Пауза на границе абзаца",
+            desc: "Во сколько раз дольше держать последнее слово абзаца",
+            aliases: ["paragraphPauseMultiplier"],
+            control: { type: "slider", key: "paragraphPauseMultiplier", min: 1, max: 5, step: 0.5, defaultValue: DEFAULT_SETTINGS.paragraphPauseMultiplier },
           },
           {
             name: "Умные паузы на числах и аббревиатурах",
@@ -333,6 +362,30 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
         type: "group",
         heading: "Режимы отображения и Чанкинг (Display Modes)",
         items: [
+          {
+            name: "Тема окна чтения",
+            desc: "Цвет фона и текста в окне скорочтения",
+            aliases: ["themeMode", "theme"],
+            control: { type: "dropdown", key: "themeMode", defaultValue: String(DEFAULT_SETTINGS.themeMode),
+              options: {
+                "default": "Как в Obsidian",
+                "dark": "Тёмная",
+                "light": "Светлая",
+                "sepia": "Сепия",
+              } },
+          },
+          {
+            name: "Шаг перемотки стрелками",
+            desc: "Сколько слов пропускать по клавишам ← и →",
+            aliases: ["stepWordCount"],
+            control: { type: "dropdown", key: "stepWordCount", defaultValue: String(DEFAULT_SETTINGS.stepWordCount),
+              options: {
+                "5": "5 слов",
+                "10": "10 слов",
+                "25": "25 слов",
+                "50": "50 слов",
+              } },
+          },
           {
             name: "Размер чанка (слов за раз)",
             desc: "Показывать по 1 слову (классический RSVP с ORP) или по 2–3 слова для опытных чтецов",
