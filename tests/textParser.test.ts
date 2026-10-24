@@ -8,6 +8,145 @@ import {
 } from "../src/textParser.ts";
 
 describe("textParser - cleanMarkdown", () => {
+  it("drops empty table rows without attaching phantom punctuation to nearby words", () => {
+    const options = { pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 };
+    for (const row of ["||", "|||", "| | |", "|\t|", "|---|---|"]) {
+      for (const newline of [String.fromCharCode(10), String.fromCharCode(13, 10)]) {
+        const source = `перед таблицей${newline}${row}${newline}после`;
+        const words = parseWords(source, options);
+        assert.deepStrictEqual(words.map(word => word.raw), ["перед", "таблицей", "после"], row);
+        assert.deepStrictEqual(words.map(word => word.charOffset), [0, source.indexOf("таблицей"), source.indexOf("после")]);
+        assert.strictEqual(cleanMarkdown(row), "");
+        assert.deepStrictEqual(parseWords(row, options), []);
+      }
+    }
+    assert.strictEqual(cleanMarkdown("| а | б |").replace(/\s+/g, " "), "а б ,", "nonempty table cells must remain readable");
+  });
+
+  it("unwraps highlight markers around equality without consuming literal code operators", () => {
+    for (const body of [
+      "Пусть x = 5 и y = 10.", "Сравнение a == b.",
+      "Проверка `a = 1` в коде.", "Проверка `a == b` в коде.",
+      "Проверка ``a `nested` == b == c`` в коде.",
+      "Проверка ```a == b``` в коде.", "Обычный\nперенос.",
+    ]) {
+      const source = "==" + body + "==";
+      assert.strictEqual(cleanMarkdown(source), cleanMarkdown(body), source);
+      const options = { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 };
+      const words = parseWords(source, options);
+      assert.deepStrictEqual(words.map(word => word.raw), parseWords(body, options).map(word => word.raw));
+      for (const word of words) {
+        const core = word.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+        assert.strictEqual(source.slice(word.charOffset, word.charEndOffset), core);
+      }
+    }
+    assert.strictEqual(cleanMarkdown("`==literal==` и ==visible=="), "==literal== и visible");
+    assert.strictEqual(cleanMarkdown("==first== и ==second=="), "first и second");
+    assert.strictEqual(cleanMarkdown("==unclosed"), "==unclosed");
+  });
+
+  it("preserves literal Markdown and operators inside inline code", () => {
+    for (const body of ["$a", "Array<string>", "a * b * c", "a | b", "**bold**", "[label](url)", "<!--literal-->", "%%literal%%", "a_b_c", "value `nested` end"]) {
+      const delimiter = body.includes("`") ? "``" : "`";
+      assert.strictEqual(cleanMarkdown(delimiter + body + delimiter), body);
+    }
+    assert.strictEqual(cleanMarkdown("`$a` и `$b`"), "$a и $b");
+    assert.strictEqual(cleanMarkdown("**до `Array<string>` после** и *текст*"), "до Array<string> после и текст");
+    const source = "До `Array<string>` и `a | b` после.";
+    const words = parseWords(source, { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 });
+    for (const word of words) {
+      const core = word.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+      assert.strictEqual(source.slice(word.charOffset, word.charEndOffset), core);
+    }
+  });
+
+  it("preserves long currency prose enclosing inline code", () => {
+    const source = "Цена $5 за штуку, в коде `Array<string>` и ещё немного обычного текста до $10.";
+    assert.strictEqual(cleanMarkdown(source), source.replaceAll("`", ""));
+  });
+
+  it("does not interpret short or long math across inline code", () => {
+    for (const body of ["a `Array<string>` b", "a `Array<string>` " + "long prose ".repeat(6) + "b"]) {
+      for (const [open, close] of [["$", "$"], ["$$", "$$"], ["\\(", "\\)"], ["\\[", "\\]"]]) {
+        const source = open + body + close;
+        assert.strictEqual(cleanMarkdown(source), source.replaceAll("`", ""), source);
+      }
+    }
+  });
+
+  it("does not expose hidden markup just because it contains backticks", () => {
+    for (const [source, expected] of [
+      ["before ![alt `code`](image.png) after", "before  after"],
+      ['before <span title="`code`">after</span>', "before after"],
+      ["[[target `code`|alias]]", "alias"],
+      ["[label](`destination`)", "label"],
+    ]) {
+      assert.strictEqual(cleanMarkdown(source), expected, source);
+    }
+  });
+
+  it("unwraps enclosing emphasis and link labels without dropping code", () => {
+    for (const [open, close] of [
+      ["**", "**"], ["*", "*"], ["__", "__"], ["_", "_"], ["~~", "~~"], ["==", "=="],
+      ["[", "](https://example.com)"], ["[[target|", "]]"], ["[[", "]]"],
+    ]) {
+      assert.strictEqual(cleanMarkdown(open + "до `Array<string>` после" + close), "до Array<string> после");
+    }
+  });
+
+  it("still removes complete hidden comments containing paired backticks", () => {
+    for (const comment of ["<!-- hidden `Array<string>` -->", "%% hidden `Array<string>` %%"]) {
+      assert.strictEqual(cleanMarkdown(comment + " `visible`"), "visible");
+    }
+  });
+
+  it("keeps existing plain formula cleanup", () => {
+    assert.strictEqual(cleanMarkdown("$x$ и $O(n)$ и \\(a+b\\)"), "x и O(n) и a+b");
+    for (const source of ["$$a+b$$", "\\[a+b\\]", "$" + "a+b+".repeat(12) + "z$", "$a\nb$"]) {
+      assert.strictEqual(cleanMarkdown(source), "", source);
+    }
+  });
+
+  it("preserves adjacent code spans and their original offsets across wide math", () => {
+    const sources = [
+      "---\ntitle: hidden\n---\nЦена $5 за `Array<string>` и `Map<number>` вместе с длинным обычным описанием до $10.",
+      "$a `Array<string>` `Map<number>` b$",
+      "$a ``outer `inner` end`` и `next` b$",
+    ];
+    for (const source of sources) {
+      const words = parseWords(source, { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 });
+      assert.ok(words.some(word => word.raw.includes("Array<string>") || word.raw.includes("outer")));
+      for (const word of words) {
+        const core = word.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+        const original = source.slice(word.charOffset, word.charEndOffset);
+        assert.strictEqual(original, core, source);
+      }
+    }
+  });
+
+  it("cleans neighboring math and emphasis after a protected inline-code span", () => {
+    assert.strictEqual(cleanMarkdown("`$a` и $x$"), "$a и x");
+    assert.strictEqual(cleanMarkdown("`*a` и *текст*"), "*a и текст");
+    assert.strictEqual(cleanMarkdown("`<a` и <b>текст</b>"), "<a и текст");
+  });
+
+  it("does not pair inline-code openers from hidden comments with visible text", () => {
+    for (const comment of ["<!-- `unmatched -->", "%% `unmatched %%"]) {
+      assert.strictEqual(cleanMarkdown(comment + " Outside `Array<string>` after."), "Outside Array<string> after.");
+    }
+    assert.strictEqual(cleanMarkdown("`<!-- literal` outside <!-- hidden ` --> `visible`"), "<!-- literal outside  visible");
+  });
+
+  it("interprets frontmatter only once on the original document", () => {
+    for (const newline of ["\n", "\r\n"]) {
+      const source = ["---", "title: one", "---", "---", "note: `Array<string>`", "---"].join(newline);
+      assert.strictEqual(cleanMarkdown(source), "note: Array<string>");
+      const words = parseWords(source, { pauseOnPunctuation: false, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4 });
+      assert.strictEqual(words[1].raw, "Array<string>");
+      assert.strictEqual(words[1].charOffset, source.indexOf("Array<string>"));
+    }
+  });
+
   it("removes YAML frontmatter", () => {
     const input = `---
 title: My Note
@@ -64,6 +203,22 @@ tag: speedreading
     assert.ok(!result.includes("---"));
     assert.ok(!result.includes("#"));
     assert.ok(!result.includes("**"));
+  });
+});
+
+describe("textParser - inline code ranges", () => {
+  it("exports exact source ranges while ignoring comments, fences and escaped openers", async () => {
+    const parser = await import("../src/textParser.ts");
+    assert.strictEqual(typeof parser.findInlineCodeRanges, "function");
+    const source = "<!-- `hidden` --> %% `hidden` %%\n```\n`fenced`\n```\n\\`escaped and ``outer `inner` end`` `next`";
+    const ranges = parser.findInlineCodeRanges(source);
+    const expected = ["``outer `inner` end``", "`next`"].map(span => {
+      const start = source.indexOf(span);
+      const delimiterLength = span.startsWith("``") ? 2 : 1;
+      return { start, contentStart: start + delimiterLength,
+        contentEnd: start + span.length - delimiterLength, end: start + span.length };
+    });
+    assert.deepStrictEqual(ranges, expected);
   });
 });
 

@@ -13,6 +13,11 @@ export interface ParsedWord {
   delayMultiplier: number;
   isParagraphEnd?: boolean;
   charOffset?: number;
+  /** Exclusive source offset after the last core-word character. */
+  charEndOffset?: number;
+  /** Source boundaries of the complete visible token, including punctuation. */
+  sourceStartOffset?: number;
+  sourceEndOffset?: number;
 }
 
 export interface HeadingItem {
@@ -43,11 +48,141 @@ export function cleanMarkdown(text: string, readCodeBlocks: boolean = false): st
   return cleanMarkdownWithOffsets(text, readCodeBlocks).text;
 }
 
+interface FencedCodeRange {
+  start: number;
+  openingEnd: number;
+  closingStart: number;
+  end: number;
+}
+
+/** Locate complete or EOF-terminated fences without confusing their contents with delimiters. */
+function findFencedCodeRanges(text: string): FencedCodeRange[] {
+  const ranges: FencedCodeRange[] = [];
+  let open: { marker: string; length: number; start: number; openingEnd: number } | null = null;
+  const lines = /[^\n]*(?:\n|$)/g;
+  let match: RegExpExecArray | null;
+  while ((match = lines.exec(text)) !== null && match[0].length > 0) {
+    const line = match[0].replace(/\r?\n$/, "");
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!delimiter) continue;
+    if (open) {
+      if (delimiter[1][0] === open.marker && delimiter[1].length >= open.length && !delimiter[2].trim()) {
+        ranges.push({ start: open.start, openingEnd: open.openingEnd,
+          closingStart: match.index, end: match.index + line.length });
+        open = null;
+      }
+    } else if (delimiter[1][0] !== "`" || !delimiter[2].includes("`")) {
+      open = { marker: delimiter[1][0], length: delimiter[1].length,
+        start: match.index, openingEnd: match.index + line.length };
+    }
+  }
+  if (open) ranges.push({ start: open.start, openingEnd: open.openingEnd,
+    closingStart: text.length, end: text.length });
+  return ranges;
+}
+
+/** A leading horizontal rule is not frontmatter unless the block contains YAML keys. */
+function findFrontmatterEnd(text: string): number {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  return frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1]) ? frontmatter[0].length : 0;
+}
+
+export interface InlineCodeRange {
+  start: number;
+  contentStart: number;
+  contentEnd: number;
+  end: number;
+}
+
+/** Pair exact-length backtick runs, excluding fenced code and escaped openers. */
+export function findInlineCodeRanges(text: string): InlineCodeRange[] {
+  const bodyStart = findFrontmatterEnd(text);
+  // Collect candidates, not raw fence ranges: a delimiter becomes a fence
+  // only when reached outside an earlier comment or inline-code span.
+  const fences: { start: number; markerStart: number; end: number; marker: string; length: number; canClose: boolean }[] = [];
+  const delimiters = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm;
+  delimiters.lastIndex = bodyStart;
+  let match: RegExpExecArray | null;
+  while ((match = delimiters.exec(text)) !== null) {
+    if (match[1][0] === "`" && match[2].includes("`")) continue;
+    fences.push({ start: match.index, markerStart: match.index + match[0].indexOf(match[1]),
+      end: delimiters.lastIndex, marker: match[1][0], length: match[1].length, canClose: !match[2].trim() });
+  }
+  const runs: { start: number; end: number }[] = [];
+  const pattern = /`+/g;
+  pattern.lastIndex = bodyStart;
+  while ((match = pattern.exec(text)) !== null) {
+    runs.push({ start: match.index, end: match.index + match[0].length });
+  }
+  const next = new Array<number>(runs.length).fill(-1);
+  const byLength = new Map<number, number>();
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const length = runs[index].end - runs[index].start;
+    next[index] = byLength.get(length) ?? -1;
+    byLength.set(length, index);
+  }
+  const ranges: InlineCodeRange[] = [];
+  const byStart = new Map(runs.map((run, index) => [run.start, index]));
+  const events = /<!--|%%|^ {0,3}~{3,}|`+/gm;
+  events.lastIndex = bodyStart;
+  let fenceIndex = 0;
+  while ((match = events.exec(text)) !== null) {
+    while (fenceIndex < fences.length && fences[fenceIndex].markerStart < match.index) fenceIndex++;
+    const fence = fences[fenceIndex];
+    if (fence && fence.start <= match.index) {
+      // A real fence owns all following lines, including apparent comments,
+      // until a compatible closing delimiter (or EOF) is reached.
+      events.lastIndex = text.length;
+      for (fenceIndex++; fenceIndex < fences.length; fenceIndex++) {
+        const closing = fences[fenceIndex];
+        if (closing.marker === fence.marker && closing.length >= fence.length && closing.canClose) {
+          events.lastIndex = closing.end;
+          fenceIndex++;
+          break;
+        }
+      }
+      continue;
+    }
+    if (match[0] === "<!--" || match[0] === "%%") {
+      const closingMarker = match[0] === "<!--" ? "-->" : "%%";
+      const closing = text.indexOf(closingMarker, events.lastIndex);
+      if (closing >= 0) events.lastIndex = closing + closingMarker.length;
+      continue;
+    }
+    const index = byStart.get(match.index);
+    if (index === undefined) continue;
+    let escaped = 0;
+    for (let before = runs[index].start - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escaped++;
+    if (escaped % 2 || next[index] < 0) continue;
+    const closing = next[index];
+    if (fenceIndex < fences.length && fences[fenceIndex].start <= runs[closing].start) continue;
+    ranges.push({ start: runs[index].start, contentStart: runs[index].end,
+      contentEnd: runs[closing].start, end: runs[closing].end });
+    events.lastIndex = runs[closing].end;
+  }
+  return ranges;
+}
+
 /** Keep source positions through exactly the same transformations as visible text. */
-function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false): { text: string; offsets: number[] } {
+function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false): {
+  text: string; offsets: number[]; wrappers: { start: number; end: number }[];
+} {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
-  const replace = (pattern: RegExp, replacement: string): void => {
+  const wrappers: { start: number; end: number }[] = [];
+  let inlineCode: InlineCodeRange[] = [];
+  const inlineCodeAt = (offset: number, end: number = offset + 1): InlineCodeRange | undefined => {
+    if (end <= offset) return undefined;
+    let low = 0, high = inlineCode.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (inlineCode[middle].end <= offset) low = middle + 1;
+      else high = middle;
+    }
+    const range = inlineCode[low];
+    return range && range.start < end ? range : undefined;
+  };
+  const replace = (pattern: RegExp, replacement: string, allowEnclosingCode: boolean = true): void => {
     // On a clean note most patterns never match: skip copying the whole
     // offset array for each of them.
     if (!new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "")).test(cleaned)) return;
@@ -55,67 +190,105 @@ function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false)
     const appendOffsets = (start: number, end: number): void => {
       for (let index = start; index < end; index++) nextOffsets.push(offsets[index]);
     };
+    const scanner = new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "") + "gd");
+    const parts: string[] = [];
+    const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
     let end = 0;
-    cleaned = cleaned.replace(pattern, (...args: unknown[]) => {
-      const match = args[0] as string;
-      const start = args[args.length - 2] as number;
-      appendOffsets(end, start);
-      end = start + match.length;
-      if (!replacement) return "";
-      const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
-      if (!groupMatch) {
-        // Literal replacement (e.g. a space between table cells).
-        for (let i = 0; i < replacement.length; i++) nextOffsets.push(offsets[start] ?? 0);
-        return replacement;
+    let match: RegExpExecArray | null;
+    while ((match = scanner.exec(cleaned)) !== null) {
+      const start = match.index;
+      const matchEnd = start + match[0].length;
+      const retained = groupMatch
+        ? (match as RegExpExecArray & { indices: [number, number][] }).indices[Number(groupMatch[1])]
+        : undefined;
+      // A rule cannot start/end inside code. Math must not cross any code,
+      // but real enclosing Markdown still unwraps or hides its own contents.
+      const protectedRange = inlineCodeAt(offsets[start]) ?? inlineCodeAt(offsets[matchEnd - 1])
+        ?? (allowEnclosingCode ? undefined : inlineCodeAt(offsets[start], offsets[matchEnd - 1] + 1));
+      // Resume after protected code rather than swallowing a later valid match.
+      if (protectedRange) {
+        let nextStart = start;
+        while (nextStart < offsets.length && offsets[nextStart] < protectedRange.end) nextStart++;
+        scanner.lastIndex = Math.max(start + 1, nextStart);
+        continue;
       }
-      const group = Number(groupMatch[1]);
-      const suffix = groupMatch[2];
-      // Re-execute on this match to obtain the retained group's exact position,
-      // even when hidden link targets contain the same text as their label.
-      const flags = pattern.flags.replace(/[gd]/g, "") + "d";
-      const localPattern = new RegExp(pattern.source, flags);
-      const localMatch = localPattern.exec(match) as (RegExpExecArray & { indices: [number, number][] }) | null;
-      const range = localMatch!.indices[group];
-      appendOffsets(start + range[0], start + range[1]);
-      if (!suffix) return args[group] as string;
-      // Synthetic punctuation has no source position; map it to the group's
-      // last character so word offsets stay valid.
-      for (let i = 0; i < suffix.length; i++) nextOffsets.push(offsets[start + range[1] - 1] ?? 0);
-      return String(args[group]) + suffix;
-    });
+      parts.push(cleaned.slice(end, start));
+      appendOffsets(end, start);
+      // Record only transformations that retain readable content. The editor
+      // must expand precisely the wrappers the cleaner actually recognized,
+      // rather than reinterpret literal underscores with a second parser.
+      if (retained && retained[1] > retained[0] && groupMatch?.[2] === "") {
+        wrappers.push({ start: offsets[start], end: offsets[matchEnd - 1] + 1 });
+      }
+      end = matchEnd;
+      if (replacement) {
+        if (groupMatch && retained) {
+          const group = Number(groupMatch[1]);
+          const suffix = groupMatch[2];
+          appendOffsets(retained[0], retained[1]);
+          for (let index = 0; index < suffix.length; index++) nextOffsets.push(offsets[retained[1] - 1] ?? 0);
+          parts.push(match[group] + suffix);
+        } else {
+          for (let index = 0; index < replacement.length; index++) nextOffsets.push(offsets[start] ?? 0);
+          parts.push(replacement);
+        }
+      }
+      if (!pattern.global) break;
+      if (!match[0].length) scanner.lastIndex++;
+    }
+    parts.push(cleaned.slice(end));
     appendOffsets(end, offsets.length);
+    cleaned = parts.join("");
     offsets = nextOffsets;
   };
 
   // Remove YAML frontmatter: a delimited block that actually holds YAML keys,
   // so a note that starts with a horizontal rule keeps its first paragraph.
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(cleaned);
-  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
-    replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+  const frontmatterEnd = findFrontmatterEnd(cleaned);
+  if (frontmatterEnd) {
+    cleaned = cleaned.slice(frontmatterEnd);
+    offsets = offsets.slice(frontmatterEnd);
   }
+
+  inlineCode = findInlineCodeRanges(text);
+  wrappers.push(...inlineCode.map(({ start, end }) => ({ start, end })));
 
   // Remove Obsidian and HTML comments
   replace(/%%[\s\S]*?%%/g, "");
   replace(/<!--[\s\S]*?-->/g, "");
 
-  // Code blocks: skipped for prose reading, or unwrapped when reading code.
-  if (readCodeBlocks) {
-    replace(/^[ \t]*```[^\n]*$/gm, "");
-  } else {
-    replace(/```[\s\S]*?```/g, "");
+  // Code blocks: skip the entire range, or just its opening/closing lines.
+  const codeRanges = findFencedCodeRanges(cleaned);
+  if (codeRanges.length > 0) {
+    const removed: { start: number; end: number }[] = [];
+    for (const range of codeRanges) {
+      if (readCodeBlocks) removed.push({ start: range.start, end: range.openingEnd },
+        { start: range.closingStart, end: range.end });
+      else removed.push({ start: range.start, end: range.end });
+    }
+    const parts: string[] = [];
+    const nextOffsets: number[] = [];
+    let cursor = 0;
+    for (const range of [...removed, { start: cleaned.length, end: cleaned.length }]) {
+      parts.push(cleaned.slice(cursor, range.start));
+      for (let index = cursor; index < range.start; index++) nextOffsets.push(offsets[index]);
+      cursor = range.end;
+    }
+    cleaned = parts.join("");
+    offsets = nextOffsets;
   }
 
   // Display math (block and bracket forms) is not read word by word.
-  replace(/\$\$[\s\S]*?\$\$/g, "");
-  replace(/\\\[[\s\S]*?\\\]/g, "");
+  replace(/\$\$[\s\S]*?\$\$/g, "", false);
+  replace(/\\\[[\s\S]*?\\\]/g, "", false);
 
   // Inline math: keep short variables ($x$, $O(n)$) as text, drop formulas.
-  replace(/\\\(([\s\S]*?)\\\)/g, "$1");
-  replace(/\$([^$\n]{1,40})\$/g, "$1");
-  replace(/\$[^$]*\$/g, "");
+  // Unlike enclosing emphasis or link labels, math cannot cross inline code.
+  // Single-dollar rules must not consume a rejected display-math delimiter.
+  replace(/\\\(([\s\S]*?)\\\)/g, "$1", false);
+  replace(/(?<!\$)\$([^$\n]{1,40})\$(?!\$)/g, "$1", false);
+  replace(/(?<!\$)\$[^$]+\$(?!\$)/g, "", false);
 
-  // Remove inline code
-  replace(/`([^`]+)`/g, "$1");
 
   // Remove images ![[image]] or ![alt](url)
   replace(/!\[\[.*?\]\]/g, "");
@@ -127,9 +300,6 @@ function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false)
   // Replace Markdown links [text](url) -> text
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 
-  // Shorten bare URLs to their domain
-  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
-
   // Remove footnote references
   replace(/\[\^[^\]]+\]:?/g, "");
 
@@ -139,8 +309,43 @@ function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false)
   // Remove callout type markers (> [!note]) but keep the title
   replace(/^\s*>\s*\[![^\]]+\][+-]?\s*/gm, "");
 
-  // Unwrap ==highlights==
-  replace(/==([^=]+)==/g, "$1");
+  // Pair highlight delimiters outside exact source-code ranges. A closing
+  // marker needs a non-space on its left (so "a == b" stays literal).
+  // Soft line breaks are valid in the host; blank paragraphs are not.
+  const highlightMarkers = /==|\r?\n[ \t]*\r?\n/g;
+  const highlightDelimiters = new Set<number>();
+  let highlightStart = -1;
+  let highlightMarker: RegExpExecArray | null;
+  while ((highlightMarker = highlightMarkers.exec(cleaned)) !== null) {
+    if (highlightMarker[0] !== "==") { highlightStart = -1; continue; }
+    const index = highlightMarker.index;
+    if (inlineCodeAt(offsets[index]) || inlineCodeAt(offsets[index + 1])) continue;
+    let escapes = 0;
+    for (let before = offsets[index] - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escapes++;
+    if (escapes % 2) continue;
+    if (highlightStart >= 0 && !/\s/.test(cleaned[index - 1])) {
+      wrappers.push({ start: offsets[highlightStart], end: offsets[index + 1] + 1 });
+      for (const position of [highlightStart, highlightStart + 1, index, index + 1]) highlightDelimiters.add(position);
+      highlightStart = -1;
+    } else if (highlightStart < 0 && index + 2 < cleaned.length && !/\s/.test(cleaned[index + 2])) {
+      highlightStart = index;
+    }
+  }
+  if (highlightDelimiters.size) {
+    const characters: string[] = [];
+    const retainedOffsets: number[] = [];
+    for (let index = 0; index < cleaned.length; index++) {
+      if (highlightDelimiters.has(index)) continue;
+      characters.push(cleaned[index]);
+      retainedOffsets.push(offsets[index]);
+    }
+    cleaned = characters.join("");
+    offsets = retainedOffsets;
+  }
+
+  // Unwrap highlights before URL shortening: a path otherwise consumes its
+  // adjacent closing == and leaves an unmatched opening marker on reopen.
+  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
 
   // Remove header hashes (#, ##, etc.) but keep title words
   replace(/^#{1,6}\s+/gm, "");
@@ -154,8 +359,8 @@ function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false)
   // Remove blockquotes (>)
   replace(/^\s*>\s*/gm, "");
 
-  // Remove markdown table separator lines |---|---|
-  replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
+  // Remove markdown table separators and empty rows such as ||.
+  replace(/^[ \t]*\|[-:| \t]*\|[ \t]*$/gm, "");
 
   // Tables: keep the cells as readable words, end each row with a pause.
   replace(/^[ \t]*\|(.*?)\|[ \t]*$/gm, "$1 ,");
@@ -171,9 +376,26 @@ function cleanMarkdownWithOffsets(text: string, readCodeBlocks: boolean = false)
   // Remove horizontal rules
   replace(/^\s*[-*_]{3,}\s*$/gm, "");
 
+  // Strip only the original code delimiters after all Markdown rules finish.
+  const delimiters = new Set<number>();
+  for (const range of inlineCode) {
+    for (let index = range.start; index < range.contentStart; index++) delimiters.add(index);
+    for (let index = range.contentEnd; index < range.end; index++) delimiters.add(index);
+  }
+  if (delimiters.size > 0) {
+    const characters: string[] = [];
+    const retainedOffsets: number[] = [];
+    for (let index = 0; index < cleaned.length; index++) {
+      if (delimiters.has(offsets[index])) continue;
+      characters.push(cleaned[index]);
+      retainedOffsets.push(offsets[index]);
+    }
+    cleaned = characters.join("");
+    offsets = retainedOffsets;
+  }
   const start = cleaned.match(/^\s*/)![0].length;
   const trimmed = cleaned.trim();
-  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length) };
+  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length), wrappers };
 }
 
 /**
@@ -247,35 +469,51 @@ export function splitWordForOrp(
  * paragraph boundary awareness, and Spritz variable pacing.
  */
 export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
-  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text, options.readCodeBlocks ?? false);
-  if (!cleaned.trim()) return [];
+  return parseDocument(text, options).words;
+}
+
+/** Words and recognized wrappers from one cleanup pass over the original source. */
+export function parseDocument(text: string, options: ParseOptions): {
+  words: ParsedWord[]; wrappers: { start: number; end: number }[];
+} {
+  const { text: cleaned, offsets, wrappers } = cleanMarkdownWithOffsets(text, options.readCodeBlocks ?? false);
+  if (!cleaned.trim()) return { words: [], wrappers };
 
   // Split into paragraphs by double newlines
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result: ParsedWord[] = [];
 
-  // Search visible text only; retained character positions map back to source.
-  let searchFrom = 0;
+  // Locate tokens in visible text, retaining punctuation positions across hidden syntax.
+  let paragraphSearchFrom = 0;
 
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const paragraph = paragraphs[pIdx];
-    const rawTokens = paragraph.split(/\s+/).filter((w) => w.length > 0);
+    const paragraphStart = cleaned.indexOf(paragraph, paragraphSearchFrom);
+    paragraphSearchFrom = paragraphStart + paragraph.length;
 
     // Merge standalone punctuation with preceding word
-    const mergedTokens: string[] = [];
-    for (const token of rawTokens) {
+    const mergedTokens: { raw: string; start: number; end: number }[] = [];
+    const tokenPattern = /\S+/g;
+    let tokenMatch: RegExpExecArray | null;
+    while ((tokenMatch = tokenPattern.exec(paragraph)) !== null) {
+      const token = tokenMatch[0];
+      const start = paragraphStart + tokenMatch.index;
+      const end = start + token.length;
       const hasWordChar = /[\p{L}\p{N}]/u.test(token);
       if (!hasWordChar && mergedTokens.length > 0) {
-        mergedTokens[mergedTokens.length - 1] += ` ${token}`;
+        const previous = mergedTokens[mergedTokens.length - 1];
+        previous.raw += ` ${token}`;
+        previous.end = end;
       } else if (hasWordChar) {
-        mergedTokens.push(token);
+        mergedTokens.push({ raw: token, start, end });
       }
     }
 
     const isLastParagraph = pIdx === paragraphs.length - 1;
 
     for (let tIdx = 0; tIdx < mergedTokens.length; tIdx++) {
-      const token = mergedTokens[tIdx];
+      const visibleToken = mergedTokens[tIdx];
+      const token = visibleToken.raw;
       const isParagraphEnd = tIdx === mergedTokens.length - 1 && !isLastParagraph;
 
       const { prefix, focusChar, suffix } = splitWordForOrp(token, options.orpWidth ?? 1);
@@ -326,11 +564,13 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
 
       // Locate the first visible letter, including words spanning markup.
       let charOffset: number | undefined;
+      let charEndOffset: number | undefined;
       if (coreWord.length > 0) {
-        const found = cleaned.indexOf(coreWord, searchFrom);
-        if (found !== -1) {
+        const prefixLength = token.match(/^[^\p{L}\p{N}]*/u)![0].length;
+        const found = visibleToken.start + prefixLength;
+        if (cleaned.slice(found, found + coreWord.length) === coreWord) {
           charOffset = offsets[found];
-          searchFrom = found + coreWord.length;
+          charEndOffset = offsets[found + coreWord.length - 1] + 1;
         }
       }
 
@@ -342,21 +582,27 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
         delayMultiplier,
         isParagraphEnd,
         charOffset,
+        charEndOffset,
+        sourceStartOffset: offsets[visibleToken.start],
+        sourceEndOffset: offsets[visibleToken.end - 1] + 1,
       });
     }
   }
 
-  return result;
+  return { words: result, wrappers };
 }
 
 /**
- * Finds the index of the first word at or after a given source offset.
+ * Finds the word containing the source offset, or the next word in a gap.
  */
 export function findWordIndexAtOffset(words: ParsedWord[], targetOffset: number): number {
   if (words.length === 0 || targetOffset <= 0) return 0;
   for (let index = 0; index < words.length; index++) {
     const offset = words[index].charOffset;
-    if (typeof offset === "number" && offset >= targetOffset) return index;
+    if (typeof offset !== "number") continue;
+    if (offset >= targetOffset) return index;
+    const end = words[index].charEndOffset ?? offset + words[index].raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").length;
+    if (targetOffset < end) return index;
   }
   return words.length - 1;
 }
@@ -367,17 +613,31 @@ export function findWordIndexAtOffset(words: ParsedWord[], targetOffset: number)
 export function extractHeadings(text: string, words: ParsedWord[]): HeadingItem[] {
   if (!text || words.length === 0) return [];
   const headings: HeadingItem[] = [];
-  const headingPattern = /^(#{1,6})\s+(.+?)\s*$/gm;
-  let match: RegExpExecArray | null;
-  while ((match = headingPattern.exec(text)) !== null) {
+  // Mask comments before scanning fences: an example fence inside a hidden
+  // comment must not swallow real headings after it. Keep source offsets.
+  let source = text.replace(/%%[\s\S]*?%%|<!--[\s\S]*?-->/g, (hidden) => hidden.replace(/[^\r\n]/g, " "));
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
+    source = frontmatter[0].replace(/[^\r\n]/g, " ") + source.slice(frontmatter[0].length);
+  }
+  const codeRanges = findFencedCodeRanges(source);
+  let codeIndex = 0;
+  let lineOffset = 0;
+  for (const line of source.split("\n")) {
+    const offset = lineOffset;
+    lineOffset += line.length + 1;
+    while (codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].end) codeIndex++;
+    if (codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].start) continue;
+    const match = /^(#{1,6})[ \t]+(.+?)[ \t\r]*$/.exec(line);
+    if (!match) continue;
     const title = cleanMarkdown(match[2]).trim();
     if (!title) continue;
-    headings.push({
-      level: match[1].length,
-      title,
-      charOffset: match.index,
-      wordIndex: findWordIndexAtOffset(words, match.index),
-    });
+    const titleOffset = offset + match[1].length;
+    const wordIndex = findWordIndexAtOffset(words, titleOffset);
+    const wordOffset = words[wordIndex].charOffset;
+    // Only headings represented in readable text belong in the reader TOC.
+    if (wordOffset === undefined || wordOffset < titleOffset || wordOffset >= offset + line.length) continue;
+    headings.push({ level: match[1].length, title, charOffset: offset, wordIndex });
   }
   return headings;
 }

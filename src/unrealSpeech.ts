@@ -214,10 +214,9 @@ export async function synthesizeSpeech(
     throw new UnrealSpeechError("network", "В этом окружении нет fetch для запросов к Unreal Speech.");
   }
 
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeout = controller ? window.setTimeout(() => controller.abort(), 20000) : 0;
-
   const response = await limiter.schedule(async () => {
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeout = controller ? window.setTimeout(() => controller.abort(), 20000) : 0;
     try {
       return await request(UNREAL_SPEECH_ENDPOINT, {
         method: "POST",
@@ -228,7 +227,7 @@ export async function synthesizeSpeech(
         signal: controller?.signal,
         body: JSON.stringify({
           Text: payloadText,
-          VoiceId: options.voiceId || "Scarlett",
+          VoiceId: options.voiceId || "Amelia",
           Bitrate: options.bitrate || "192k",
           Speed: wpmToSpeechSpeed(options.wpm ?? 300),
           Pitch: "1",

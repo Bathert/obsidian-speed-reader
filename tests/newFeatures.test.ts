@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   cleanMarkdown,
   extractHeadings,
+  findInlineCodeRanges,
   findWordIndexAtOffset,
   parseWords,
 } from "../src/textParser.ts";
@@ -152,6 +153,142 @@ describe("textParser - table cleanup regressions", () => {
     assert.equal(leading, "«");
     assert.equal(source[word.charOffset! - leading.length], "«");
     assert.match(source[word.charOffset!] ?? "", /\p{L}/u);
+  });
+});
+
+describe("textParser - cursor position regressions", () => {
+  it("starts with the word containing the cursor instead of skipping it", () => {
+    const words = parseWords("one two three", defaultOpts);
+    assert.equal(findWordIndexAtOffset(words, 5), 1);
+    assert.equal(findWordIndexAtOffset(words, 4), 1);
+    assert.equal(findWordIndexAtOffset(words, 7), 2, "space starts the next word");
+    assert.equal(findWordIndexAtOffset(words, 99), 2);
+    assert.equal(findWordIndexAtOffset([], 5), 0);
+  });
+
+  it("recognizes a word spanning inline Markdown at the cursor", () => {
+    const source = "one **tw**o three";
+    const words = parseWords(source, defaultOpts);
+    assert.equal(words[1].raw, "two");
+    assert.equal(findWordIndexAtOffset(words, source.indexOf("o three")), 1);
+  });
+});
+
+describe("textParser - heading visibility regressions", () => {
+  it("excludes code headings even when code reading is enabled", () => {
+    const source = "```md\n# Example, not a chapter\n```\n\n# Real chapter\nText";
+    for (const readCodeBlocks of [false, true]) {
+      const words = parseWords(source, { ...defaultOpts, readCodeBlocks });
+      const headings = extractHeadings(source, words);
+      assert.deepEqual(headings.map((heading) => heading.title), ["Real chapter"]);
+      assert.equal(words[headings[0].wordIndex].raw, "Real");
+    }
+  });
+
+  it("ignores tilde fences, longer fences and unclosed fences", () => {
+    const source = [
+      "# Real", "~~~md", "# Hidden", "~~~", "````md", "```",
+      "# Still hidden", "````", "## Visible", "```md", "# Unclosed hidden",
+    ].join("\n");
+    const words = parseWords(source, { ...defaultOpts, readCodeBlocks: true });
+    assert.deepEqual(extractHeadings(source, words).map((heading) => heading.title), ["Real", "Visible"]);
+  });
+
+  it("ignores headings removed as comments or frontmatter", () => {
+    const source = "---\ntitle: test\n# Metadata comment\n---\n<!--\n# HTML comment\n-->\n%%\n# Obsidian comment\n%%\n# Real\nText";
+    const words = parseWords(source, defaultOpts);
+    assert.deepEqual(extractHeadings(source, words).map((heading) => heading.title), ["Real"]);
+  });
+});
+
+describe("textParser - fenced code boundary regressions", () => {
+  for (const fence of ["~~~", "~~~~", "```", "````"]) {
+    it(`handles ${fence.length}-character ${fence[0]} fences in both reading modes`, () => {
+      const source = `Before.\r\n\r\n  ${fence}js\r\nsecret code\r\n  ${fence}\r\n\r\nAfter.`;
+      for (const readCodeBlocks of [false, true]) {
+        const words = parseWords(source, { ...defaultOpts, readCodeBlocks });
+        assert.deepEqual(words.map((word) => word.raw), readCodeBlocks
+          ? ["Before.", "secret", "code", "After."] : ["Before.", "After."]);
+        const last = words.at(-1)!;
+        assert.equal(last.charOffset, source.indexOf("After."));
+        assert.equal(last.charEndOffset, source.indexOf("After.") + "After".length);
+      }
+    });
+  }
+
+  it("does not close a fence on a shorter delimiter, a different marker or trailing text", () => {
+    const source = "Before.\n\n````md\nhidden\n```\nstill hidden\n~~~~\n````invalid\nmore hidden\n`````\nAfter.";
+    assert.deepEqual(parseWords(source, defaultOpts).map((word) => word.raw), ["Before.", "After."]);
+  });
+
+  it("treats an unclosed fence as code until the end of the note", () => {
+    for (const fence of ["~~~", "```"]) {
+      const source = `Before.\n\n${fence}js\nsecret code`;
+      assert.deepEqual(parseWords(source, defaultOpts).map((word) => word.raw), ["Before."]);
+      assert.deepEqual(parseWords(source, { ...defaultOpts, readCodeBlocks: true }).map((word) => word.raw),
+        ["Before.", "secret", "code"]);
+    }
+  });
+});
+
+describe("textParser - inline code after hidden fences", () => {
+  it("preserves the exact reported HTML and Obsidian comment examples", () => {
+    assert.equal(cleanMarkdown("<!--\n```\n-->\n`Array<string>` after"), "Array<string> after");
+    assert.equal(cleanMarkdown("%%\n~~~\n%%\n`Array<string>` after"), "Array<string> after");
+  });
+
+  for (const newline of ["\n", "\r\n"]) {
+    for (const [open, close] of [["<!--", "-->"], ["%%", "%%"]]) {
+      for (const fence of ["```", "~~~"]) {
+        for (const paired of [false, true]) {
+          it(`ignores ${paired ? "paired" : "unclosed"} ${fence} in ${open} with ${JSON.stringify(newline)}`, () => {
+            const hidden = [open, "hidden `ticks`", fence, "example", ...(paired ? [fence] : []), close].join(newline);
+            const source = `${hidden}${newline}\`Array<string>\` after`;
+            assert.equal(cleanMarkdown(source), "Array<string> after");
+            const start = source.indexOf("`Array");
+            assert.deepEqual(findInlineCodeRanges(source), [{
+              start, contentStart: start + 1, contentEnd: start + "`Array<string>".length,
+              end: start + "`Array<string>`".length,
+            }]);
+            const words = parseWords(source, defaultOpts);
+            assert.deepEqual(words.map(word => word.raw), ["Array<string>", "after"]);
+            assert.equal(words[0].charOffset, start + 1);
+            assert.equal(words[0].charEndOffset, start + "`Array<string".length);
+            assert.equal(words[1].charOffset, source.indexOf("after"));
+            assert.equal(words[1].charEndOffset, source.length);
+          });
+        }
+      }
+    }
+  }
+
+  it("keeps literal comment markers in code even after a hidden fence", () => {
+    for (const literal of ["<!-- literal -->", "%% literal %%"]) {
+      const source = `<!--\n\`\`\`\n-->\n\`Array<string> ${literal}\` after`;
+      assert.equal(cleanMarkdown(source), `Array<string> ${literal} after`);
+    }
+  });
+
+  it("keeps report1 code pairing and literal backslashes inside code", () => {
+    for (const literal of ["<!-- hidden ` secret -->", "%% hidden ` secret %%"]) {
+      const source = `\`unmatched ${literal} \`Array<string>\``;
+      assert.deepEqual(findInlineCodeRanges(source).map(range => source.slice(range.contentStart, range.contentEnd)),
+        [`unmatched ${literal.slice(0, literal.indexOf("`"))}`, "Array<string>"]);
+    }
+    const source = "`a \\` b`";
+    assert.deepEqual(findInlineCodeRanges(source), [{ start: 0, contentStart: 1, contentEnd: 4, end: 5 }]);
+  });
+
+  it("allows multiline inline code but never pairs across real fenced blocks", () => {
+    const multiline = "`Array<string>\nnext`";
+    assert.equal(cleanMarkdown(multiline), "Array<string>\nnext");
+    for (const fence of ["```", "~~~"]) {
+      const source = `\`before\n${fence}\n\`inside\`\n${fence}\nafter\` then \`Array<string>\``;
+      assert.deepEqual(findInlineCodeRanges(source).map(range => source.slice(range.contentStart, range.contentEnd)),
+        [" then "]);
+      const unclosed = `${fence}\n<!--\n\`Array<string>\`\n-->`;
+      assert.deepEqual(findInlineCodeRanges(unclosed), []);
+    }
   });
 });
 

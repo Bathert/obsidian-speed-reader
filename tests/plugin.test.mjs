@@ -1,8 +1,286 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { harness } from './helpers/pluginHarness.mjs';
+import { readerHarness } from './helpers/reader-harness.mjs';
+import { parseWords } from '../src/textParser.ts';
+
+for (const sentence of [
+  'Пусть x = 5 и y = 10 в расчёте.', 'Сравнение a == b в коде.',
+  'Проверка `a = 1` в коде.', 'Проверка `a == b` в коде.',
+  'Проверка ``a `nested` == b == c`` в коде.', 'Проверка ```a == b``` в коде.',
+  'Обычный\nперенос строки.',
+]) {
+  test(`highlight equality survives reopening and repeated highlighting: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const source = sentence + ' Второе предложение.';
+    const {editor, view} = h.setEditor({text: source});
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(source, h.plugin.settings);
+    const count = parseWords(sentence, h.plugin.settings).length;
+    const first = h.calls.modals.at(-1).onHighlightSentence;
+    assert.equal(first(words[0], words[count - 1]), true);
+    assert.equal(first(words[0], words[count - 1]), true);
+    const highlighted = editor.getValue();
+    assert.equal(highlighted, '==' + sentence + '== Второе предложение.');
+    const reopened = parseWords(highlighted, h.plugin.settings);
+    assert.deepEqual(reopened.map(w => w.raw), words.map(w => w.raw));
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const second = h.calls.modals.at(-1).onHighlightSentence;
+    assert.equal(second(reopened[0], reopened[count - 1]), true);
+    assert.equal(editor.getValue(), highlighted);
+    assert.equal(second(reopened[count], reopened.at(-1)), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Второе предложение.==');
+  });
+}
+
+for (const sentence of [
+  'Первое предложение\n- с продолжением.', 'Первое предложение\n1. с продолжением.',
+  'Первое предложение\n1) с продолжением.', 'Первое предложение\n> с продолжением.',
+  'Первое предложение\n> [!note] продолжение.', 'Первое предложение\n# с продолжением.',
+  '# Первое предложение\nс продолжением.', 'Первое предложение\n---\nс продолжением.',
+  'Первое предложение\r\n- с продолжением.', 'Первое предложение\r\n\r\nс продолжением.',
+  'Первое предложение\n```\nhidden\n```\nс продолжением.',
+  'Первое предложение\n~~~\nhidden\n~~~\nс продолжением.',
+  'Первое предложение\n\nс продолжением.', 'Первое предложение\n    код\nс продолжением.',
+]) {
+  test(`highlight refuses crossing Markdown block boundaries: ${JSON.stringify(sentence)}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const {editor, view} = h.setEditor({text: sentence});
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(sentence, h.plugin.settings);
+    assert.equal(h.calls.modals[0].onHighlightSentence(words[0], words.at(-1)), false);
+    assert.equal(editor.getValue(), sentence);
+  });
+}
+
+for (const row of [
+  '| Первый | второй. | Третий. |',
+  'Первый | второй. | Третий.',
+  '| Первый `a|b` | второй. | Третий. |',
+]) {
+  test(`highlight refuses crossing real table cells: ${row}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const source = '| A | B | C |\n| --- | --- | --- |\n' + row;
+    const {editor, view} = h.setEditor({text: source});
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(source, h.plugin.settings);
+    const first = words.find(w => w.raw === 'Первый');
+    const last = words.find(w => w.raw === 'второй.');
+    assert.equal(h.calls.modals[0].onHighlightSentence(first, last), false);
+    assert.equal(editor.getValue(), source);
+  });
+}
+
+for (const sentence of [
+  'Обычный\nперенос строки.', 'Литерал `a|b` работает.',
+  'Литерал a | b работает.', '[[target|Имя]] работает.',
+  '# Заголовок.', '> Цитата.', '- Пункт.',
+]) {
+  test(`highlight permits local blocks and literal pipes: ${JSON.stringify(sentence)}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const {editor, view} = h.setEditor({text: sentence});
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(sentence, h.plugin.settings);
+    assert.equal(h.calls.modals[0].onHighlightSentence(words[0], words.at(-1)), true);
+    assert.deepEqual(parseWords(editor.getValue(), h.plugin.settings).map(w => w.raw), words.map(w => w.raw));
+  });
+}
+
+test('highlight remains inside a single table cell', async () => {
+  const source = '| A | B | C |\n| --- | --- | --- |\n| Первый. | второй. | Третий. |';
+  const h = harness(); await h.plugin.onload();
+  const {editor, view} = h.setEditor({text: source});
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const word = parseWords(source, h.plugin.settings).find(w => w.raw === 'Первый.');
+  assert.equal(h.calls.modals[0].onHighlightSentence(word, word), true);
+  assert.equal(editor.getValue(), source.replace('Первый.', '==Первый.=='));
+});
+
+test('highlight allows an escaped pipe within a real table cell', async () => {
+  const source = '| A | B | C |\n| --- | --- | --- |\n| Первый \\| второй. | Остальное | Третий. |';
+  const h = harness(); await h.plugin.onload();
+  const {editor, view} = h.setEditor({text: source});
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const words = parseWords(source, h.plugin.settings);
+  assert.equal(h.calls.modals[0].onHighlightSentence(words.find(w => w.raw.startsWith('Первый')), words.find(w => w.raw === 'второй.')), true);
+  assert.equal(editor.getValue(), source.replace('Первый \\| второй.', '==Первый \\| второй.=='));
+});
+
+test('highlight refuses ambiguous unprotected delimiter runs instead of corrupting a reopened reader', async () => {
+  const source = 'Проверка a==b.';
+  const h = harness(); await h.plugin.onload();
+  const {editor, view} = h.setEditor({text: source});
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const words = parseWords(source, h.plugin.settings);
+  assert.equal(h.calls.modals[0].onHighlightSentence(words[0], words.at(-1)), false);
+  assert.equal(editor.getValue(), source);
+});
+
+const slash = String.fromCharCode(92);
+for (const sentence of [
+  'Сайт https://example.com/docs/page',
+  'Сайт https://example.com/docs/page.',
+  'https://example.com/docs/page.md?key=value#part.',
+  '$x$', '$x$.', 'Считай $x$.',
+  slash + '(x' + slash + ')',
+  'Считай ' + slash + '(x' + slash + ').',
+]) {
+  test(`highlight preserves complete bare URLs and inline math: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = `${sentence} Второе предложение.`;
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const count = parseWords(sentence, h.plugin.settings).length;
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), `==${sentence}== Второе предложение.`);
+    assert.equal(highlight(words[count], words.at(-1)), true);
+    assert.equal(editor.getValue(), `==${sentence}== ==Второе предложение.==`);
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), `==${sentence}== ==Второе предложение.==`);
+  });
+}
+
+for (const body of ['Array<string>', '$x$', '**bold**', 'operator++']) {
+  test(`highlight preserves literal code punctuation at sentence end: ${body}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const sentence = 'Read `' + body + '`.';
+    const text = sentence + ' Next sentence.';
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.equal(highlight(words[0], words[1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== Next sentence.');
+    assert.equal(highlight(words[2], words[3]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+    assert.equal(highlight(words[0], words[1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+  });
+}
+
+for (const sentence of [
+  '«`$a`» работает.', '(`-v`) включает вывод.', '«`--flag`» работает.',
+  '([--flag](https://example.com)) работает.', '«`(foo)`» работает.',
+  '«`$a`».', '(`-v`).',
+]) {
+  test(`highlight preserves external leading punctuation before literal code: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = sentence + ' Next sentence.';
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const count = parseWords(sentence, h.plugin.settings).length;
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== Next sentence.');
+    assert.equal(highlight(words[count], words.at(-1)), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+  });
+}
+
+for (const sentence of [
+  'Тест ``value `nested` end``.', '``value `nested` end``.',
+  '``a b``.', 'Read ```Array<string>```.',
+  '``https://example.com/docs/page $x$`` потом.',
+]) {
+  test(`highlight uses exact-length backtick wrappers: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = sentence + ' Next sentence.';
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const count = parseWords(sentence, h.plugin.settings).length;
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.ok(count > 0);
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== Next sentence.');
+    assert.equal(highlight(words[count], words.at(-1)), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Next sentence.==');
+  });
+}
+
+test('shared code wrappers ignore YAML backticks and preserve original source offsets', async () => {
+  for (const newline of [String.fromCharCode(10), String.fromCharCode(13, 10)]) {
+    for (const yaml of ['title: `unmatched', 'title: metadata' + newline + '```js']) {
+      const h = harness(); await h.plugin.onload();
+      const metadata = ['---', yaml, '---', ''].join(newline) + newline;
+      const text = metadata + 'Read `Array<string>`. Next sentence.';
+      const { editor, view } = h.setEditor({ text });
+      h.command('speed-read-whole-note').editorCallback(editor, view);
+      const words = parseWords(text, h.plugin.settings);
+      assert.equal(h.calls.modals[0].onHighlightSentence(words[0], words[1]), true);
+      assert.equal(editor.getValue(), metadata + '==Read `Array<string>`.== Next sentence.');
+    }
+  }
+});
+
+test('highlight does not join sentences through intraword underscores', async () => {
+  const h = harness(); await h.plugin.onload();
+  const text = 'Значение a_b в начале. А тут c_d в конце.';
+  const { editor, view } = h.setEditor({ text });
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const words = parseWords(text, h.plugin.settings);
+  const highlight = h.calls.modals[0].onHighlightSentence;
+  assert.equal(highlight(words[0], words[3]), true);
+  assert.equal(editor.getValue(), '==Значение a_b в начале.== А тут c_d в конце.');
+  assert.equal(highlight(words[4], words.at(-1)), true);
+  assert.equal(editor.getValue(), '==Значение a_b в начале.== ==А тут c_d в конце.==');
+  assert.equal(highlight(words[0], words[3]), true);
+  assert.equal(editor.getValue(), '==Значение a_b в начале.== ==А тут c_d в конце.==');
+});
+
+for (const sentence of [
+  'Слово[^1].', 'Первое слово<!--скрыто-->.',
+  'Первое слово%%скрыто%%.', '«Слово»[^1]<!--скрыто-->.',
+]) {
+  test(`highlight maps punctuation across hidden syntax: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = sentence + ' Второе предложение.';
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const count = parseWords(sentence, h.plugin.settings).length;
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== Второе предложение.');
+    assert.equal(highlight(words[count], words.at(-1)), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Второе предложение.==');
+    assert.equal(highlight(words[0], words[count - 1]), true);
+    assert.equal(editor.getValue(), '==' + sentence + '== ==Второе предложение.==');
+  });
+}
 
 const plain = value => JSON.parse(JSON.stringify(value));
+
+for (const sentence of [
+  '**Первое** **предложение.**',
+  '*«**Слово**»* работает.',
+  '**«*Слово*»** работает.',
+  '«**Первое** **предложение**.»',
+  '**Пер**вое пред**ложение**.',
+  '[[note|Первое]] [предложение.](https://example.com)',
+]) {
+  test(`highlight preserves Markdown boundary wrappers: ${sentence}`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = `${sentence} Второе предложение.`;
+    const { editor, view } = h.setEditor({ text });
+    h.command('speed-read-whole-note').editorCallback(editor, view);
+    const words = parseWords(text, h.plugin.settings);
+    const highlight = h.calls.modals[0].onHighlightSentence;
+    assert.equal(highlight(words[0], words[1]), true);
+    assert.equal(editor.getValue(), `==${sentence}== Второе предложение.`);
+    assert.equal(highlight(words[2], words[3]), true);
+    assert.equal(editor.getValue(), `==${sentence}== ==Второе предложение.==`);
+    assert.equal(highlight(words[0], words[1]), true);
+    assert.equal(editor.getValue(), `==${sentence}== ==Второе предложение.==`);
+  });
+}
 
 test('onload registers commands, ribbon, settings and menu once without writes', async () => {
   const h = harness(); await h.plugin.onload();
@@ -145,6 +423,83 @@ test('fresh installations do not mutate shared defaults or other installations',
   assert.deepEqual(Object.keys(h.DEFAULT_SETTINGS.noteProgress), []);
 });
 
+test('loaded malformed speech usage cannot crash the settings renderer', async () => {
+  for (const value of [null, 'oops', -1, NaN, Infinity, {}, []]) {
+    const h = harness({ unrealSpeechCharsUsed: value });
+    await h.plugin.onload();
+    const tab = h.calls.tabs[0];
+    const usage = tab.getSettingDefinitions().flatMap(group => group.items ?? [group])
+      .find(item => item.aliases?.includes('unrealSpeechCharsUsed'));
+    const el = { empty() {}, createDiv() { return el; }, setText() {} };
+    assert.doesNotThrow(() => usage.render({ descEl: el, addButton() {} }));
+    assert.equal(h.plugin.settings.unrealSpeechCharsUsed, 0);
+    assert.equal(h.calls.saves.length, 0);
+  }
+  const valid = harness({ unrealSpeechCharsUsed: 12345 });
+  await valid.plugin.loadSettings();
+  assert.equal(valid.plugin.settings.unrealSpeechCharsUsed, 12345);
+});
+
+test('malformed saved preferences fall back without overwriting valid values', async () => {
+  const invalid = {
+    unrealSpeechApiKey: null, unrealSpeechVoiceId: {}, uiLanguage: 'xx',
+    ttsProvider: 'unknown', readerFont: 'missing', themeMode: 'neon', redicleAlignment: null,
+    defaultWpm: NaN, fontSize: -1, chunkSize: 0, orpWidth: 9,
+    stepWordCount: 'oops', rampUpWords: null, autoAccelerateIntervalWords: 0,
+    sentencePauseMultiplier: Infinity, orpColor: null, readCodeBlocks: 'yes',
+    highlightOrp: null, rememberProgress: [], enableTts: {},
+  };
+  const h = harness({ ...invalid, showPauseStats: false, unrealSpeechCharsUsed: 123 });
+  await h.plugin.onload();
+  for (const key of Object.keys(invalid)) assert.equal(h.plugin.settings[key], h.DEFAULT_SETTINGS[key], key);
+  assert.equal(h.plugin.settings.showPauseStats, false);
+  assert.equal(h.plugin.settings.unrealSpeechCharsUsed, 123);
+  await assert.doesNotReject(() => h.plugin.testUnrealSpeech());
+  assert.equal(h.calls.saves.length, 0);
+});
+
+test('fractional saved rewind counts cannot produce fractional reader positions', async () => {
+  for (const rewindOnPauseWords of [1.5, Number.MAX_VALUE]) {
+    const h = harness({ rewindOnPauseWords });
+    await h.plugin.loadSettings();
+    const reader = readerHarness('one two three four five six seven eight', h.plugin.settings);
+    reader.modal.togglePlay();
+    for (let index = 0; index < 5; index++) reader.tick();
+    reader.modal.pause(true);
+    assert.ok(Number.isInteger(reader.modal.currentIndex), 'rewind must keep an integer word index');
+    assert.doesNotThrow(() => reader.modal.togglePlay());
+    reader.modal.onClose();
+    assert.equal(h.plugin.settings.rewindOnPauseWords, h.DEFAULT_SETTINGS.rewindOnPauseWords);
+  }
+});
+
+test('saved word counts reject fractional values without discarding valid counts', async () => {
+  for (const key of ['rewindOnPauseWords', 'rampUpWords', 'autoAccelerateIntervalWords', 'stepWordCount']) {
+    const invalid = harness({ [key]: 1.5 }); await invalid.plugin.loadSettings();
+    assert.equal(invalid.plugin.settings[key], invalid.DEFAULT_SETTINGS[key], key);
+    const valid = harness({ [key]: 5 }); await valid.plugin.loadSettings();
+    assert.equal(valid.plugin.settings[key], 5, key);
+  }
+});
+
+test('saved progress retains only valid independent records', async () => {
+  const good = { index: 2, totalWords: 10, timestamp: 5 };
+  const noteProgress = {
+    good, complete: { index: 10, totalWords: 10, timestamp: 0 },
+    nil: null, text: 'bad', array: [], negative: { ...good, index: -1 },
+    fraction: { ...good, index: 1.5 }, future: { ...good, index: 11 },
+    invalidTotal: { ...good, totalWords: NaN }, invalidTime: { ...good, timestamp: Infinity },
+  };
+  const h = harness({ noteProgress }); await h.plugin.loadSettings();
+  assert.deepEqual(plain(h.plugin.settings.noteProgress), { good, complete: noteProgress.complete });
+  h.plugin.settings.noteProgress.good.index = 4;
+  assert.equal(good.index, 2, 'loaded progress records must not alias persisted data');
+  for (const value of [null, 'bad', [], 3]) {
+    const fresh = harness({ noteProgress: value }); await fresh.plugin.loadSettings();
+    assert.deepEqual(plain(fresh.plugin.settings.noteProgress), {});
+  }
+});
+
 test('loaded malformed statistics cannot break analytics commands', async () => {
   const h = harness({ stats: { totalWordsRead: null, totalSecondsRead: 'oops', maxWpm: -5, sessionsCount: -1 } });
   await h.plugin.onload();
@@ -217,3 +572,58 @@ test('speed read from Cursor starts at the word under the editor cursor', async 
   assert.equal(h.calls.modals.length, 1);
   assert.equal(h.calls.modals[0].initialIndex, 2);
 });
+
+test('highlight leaves an already highlighted sentence unchanged', async () => {
+  const h = harness(); await h.plugin.onload();
+  const text = '==**Первое** предложение.== Второе предложение.';
+  const { editor, view, edits } = h.setEditor({ text });
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const words = parseWords(text, h.plugin.settings);
+  const highlight = h.calls.modals[0].onHighlightSentence;
+  assert.equal(highlight(words[0], words[1]), true);
+  assert.equal(editor.getValue(), text);
+  assert.equal(edits.length, 0);
+  assert.equal(highlight(words[2], words[3]), true);
+  assert.equal(editor.getValue(), '==**Первое** предложение.== ==Второе предложение.==');
+});
+
+test('stale readers refuse edits and cursor sync instead of matching another occurrence', async () => {
+  const h = harness(); await h.plugin.onload();
+  const text = 'Первое предложение. Второе предложение.';
+  const { editor, view, cursorCalls, edits } = h.setEditor({ text });
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const first = h.calls.modals[0];
+  h.command('speed-read-whole-note').editorCallback(editor, view);
+  const second = h.calls.modals[1];
+  const words = parseWords(text, h.plugin.settings);
+  assert.equal(first.onHighlightSentence(words[0], words[1]), true);
+  assert.equal(second.onHighlightSentence(words[2], words[3]), false, 'other reader snapshot is stale');
+  editor.setValue(`Другое предложение. ${editor.getValue()}`);
+  const changed = editor.getValue();
+  assert.equal(first.onHighlightSentence(words[2], words[3]), false);
+  first.onSyncCursor(2, words[2].raw, words[2].charOffset);
+  first.onSyncCursor(2, words[2].raw);
+  assert.equal(editor.getValue(), changed);
+  assert.equal(edits.length, 1);
+  assert.equal(cursorCalls.length, 0);
+});
+
+for (const entry of ['whole-note', 'current', 'from-cursor']) {
+  test(`${entry} highlights successive sentences using original modal offsets and syncs the cursor`, async () => {
+    const h = harness(); await h.plugin.onload();
+    const text = 'Первое предложение. Второе предложение. Третье.';
+    const { editor, view, cursorCalls, edits } = h.setEditor({ text });
+    if (entry === 'current') h.command('speed-read-current').checkCallback(false);
+    else h.command(`speed-read-${entry}`).editorCallback(editor, view);
+    const modal = h.calls.modals[0];
+    const words = parseWords(text, h.plugin.settings);
+    assert.equal(modal.onHighlightSentence(words[0], words[1]), true);
+    assert.equal(modal.onHighlightSentence(words[2], words[3]), true);
+    assert.equal(editor.getValue(), '==Первое предложение.== ==Второе предложение.== Третье.');
+    assert.equal(modal.onHighlightSentence(words[0], words[1]), true);
+    assert.equal(modal.onHighlightSentence(words[2], words[3]), true);
+    assert.equal(edits.length, 2, 'repeated highlights are idempotent');
+    modal.onSyncCursor(4, words[4].raw, words[4].charOffset);
+    assert.deepEqual(cursorCalls[0], { type: 'cursor', line: 0, ch: editor.getValue().indexOf('Третье') });
+  });
+}

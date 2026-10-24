@@ -6,7 +6,7 @@
 import { Editor, MarkdownFileInfo, MarkdownView, Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SpeedReaderSettings, SpeedReaderSettingTab } from "./settings";
 import { SpeedReaderModal } from "./readerModal";
-import { findWordIndexAtOffset, ParsedWord, parseWords } from "./textParser";
+import { cleanMarkdown, findWordIndexAtOffset, ParsedWord, parseDocument, parseWords } from "./textParser";
 import {
   calculateProgressPercent,
   calculateTimeSavedMinutes,
@@ -15,7 +15,7 @@ import {
   formatTimeRemaining,
 } from "./speedEngine";
 import { I18N, resolveLanguage } from "./i18n";
-import { synthesizeSpeech, UnrealSpeechError } from "./unrealSpeech";
+import { synthesizeSpeech, UNREAL_SPEECH_VOICES, UnrealSpeechError } from "./unrealSpeech";
 
 /** One line of the built-in in-app diagnostics. */
 export interface SelfCheckResult {
@@ -97,12 +97,7 @@ export default class SpeedReaderPlugin extends Plugin {
           content,
           view.file?.basename || "Active Note",
           noteKey,
-          {
-            onSyncCursor: (wordIndex, rawWord, charOffset) =>
-              this.syncEditorCursor(editor, rawWord, charOffset),
-            onHighlightSentence: (startWord, endWord) =>
-              this.highlightSentenceInEditor(editor, startWord, endWord),
-          }
+          this.createEditorCallbacks(editor, content)
         ).open();
       },
     });
@@ -316,12 +311,7 @@ export default class SpeedReaderPlugin extends Plugin {
         content,
         activeView.file?.basename || "Active Note",
         noteKey,
-        {
-          onSyncCursor: (wordIndex, rawWord, charOffset) =>
-            this.syncEditorCursor(editor, rawWord, charOffset),
-          onHighlightSentence: (startWord, endWord) =>
-            this.highlightSentenceInEditor(editor, startWord, endWord),
-        }
+        this.createEditorCallbacks(editor, content)
       ).open();
     }
   }
@@ -352,47 +342,131 @@ export default class SpeedReaderPlugin extends Plugin {
 
     new SpeedReaderModal(this.app, this, content, view.file?.basename || "Active Note", noteKey, {
       initialIndex,
-      onSyncCursor: (wordIndex, rawWord, charOffset) =>
-        this.syncEditorCursor(editor, rawWord, charOffset),
-      onHighlightSentence: (startWord, endWord) =>
-        this.highlightSentenceInEditor(editor, startWord, endWord),
+      ...this.createEditorCallbacks(editor, content),
     }).open();
   }
 
-  /** Wraps the current sentence in ==highlight== inside the open note. */
-  private highlightSentenceInEditor(
-    editor: Editor,
-    startWord: ParsedWord,
-    endWord: ParsedWord
-  ): boolean {
-    if (typeof startWord.charOffset !== "number" || typeof endWord.charOffset !== "number") {
-      return false;
+  /** Each reader owns a source snapshot; only its own insertions may move offsets. */
+  private createEditorCallbacks(editor: Editor, source: string) {
+    let expected = source;
+    const highlights: { start: number; end: number }[] = [];
+    const options = this.parseOptions();
+    const { words, wrappers } = parseDocument(source, options);
+    let lineOffset = 0;
+    const sourceLines = source.split("\n").map(raw => {
+      const text = raw.replace(/\r$/, "");
+      const start = lineOffset;
+      lineOffset += raw.length + 1;
+      const pipes: number[] = [];
+      for (let index = 0; index < text.length; index++) {
+        if (text[index] !== "|") continue;
+        let escapes = 0;
+        for (let before = index - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escapes++;
+        if (escapes % 2 === 0) pipes.push(start + index);
+      }
+      return { text, start, end: start + text.length, pipes, table: false };
+    });
+    for (let index = 1; index < sourceLines.length; index++) {
+      const line = sourceLines[index];
+      const cells = line.text.trim().replace(/^\||\|$/g, "").split("|");
+      if (!line.pipes.length || !sourceLines[index - 1].pipes.length ||
+          !cells.every(cell => /^:?-+:?$/.test(cell.trim()))) continue;
+      sourceLines[index - 1].table = line.table = true;
+      for (let row = index + 1; row < sourceLines.length && sourceLines[row].pipes.length; row++) sourceLines[row].table = true;
     }
-    const doc = editor.getValue();
-    // charOffset marks the first letter of the word, while raw may carry
-    // quotes or brackets around it: expand the range to the whole token.
-    const leading = (word_ = "") => word_.match(/^[^\p{L}\p{N}]*/u)?.[0].length ?? 0;
-    const startOffset = Math.max(0, startWord.charOffset - leading(startWord.raw));
-    const endOffset = Math.min(
-      doc.length,
-      endWord.charOffset - leading(endWord.raw) + endWord.raw.length
+    // Be conservative at explicit block prefixes, but preserve ordinary soft
+    // line breaks and highlights wholly inside a single block or table cell.
+    const blockPrefix = /^[ \t]*(?:>|#{1,6}(?:[ \t]+|$)|(?:[-+*]|\d+[.)])[ \t]+|`{3,}|~{3,}|(?:[-*_][ \t]*){3,}$|[=-]+[ \t]*$|\$\$|\\\[|<[/!?a-zA-Z])/;
+    const safeHighlightRange = (start: number, end: number): boolean => {
+      const slice = source.slice(start, end);
+      if (/\r?\n[ \t]*\r?\n/.test(slice)) return false;
+      const lines = sourceLines.filter(line => line.start < end && line.end > start);
+      if (lines.length > 1 && lines.some(line => line.table || blockPrefix.test(line.text) || /^(?: {4}|\t)/.test(line.text))) return false;
+      // In a real table even a raw pipe inside backticks splits cells in the
+      // host. Escaped pipes and pipes outside table rows are not separators.
+      return !lines.some(line => line.table && line.pipes.some(pipe => start <= pipe && pipe < end));
+    };
+    const translate = (offset: number, end = false) => offset + highlights.reduce(
+      (shift, range) => shift + (range.start <= offset ? 2 : 0) +
+        (range.end < offset || (!end && range.end === offset) ? 2 : 0), 0
     );
-    if (startOffset < 0 || endOffset <= startOffset) return false;
-
-    const slice = doc.slice(startOffset, endOffset);
-    if (!slice.trim() || slice.includes("\n\n")) return false;
-    if (doc.slice(Math.max(0, startOffset - 2), startOffset) === "==") return true;
-
-    const wrapped = `==${slice}==`;
-    if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
-      editor.replaceRange(wrapped, editor.offsetToPos(startOffset), editor.offsetToPos(endOffset));
-      return true;
-    }
-    if (typeof editor.setValue === "function") {
-      editor.setValue(doc.slice(0, startOffset) + wrapped + doc.slice(endOffset));
-      return true;
-    }
-    return false;
+    return {
+      onSyncCursor: (_wordIndex: number, rawWord: string, charOffset?: number) => {
+        if (editor.getValue() !== expected) return;
+        this.syncEditorCursor(editor, rawWord,
+          typeof charOffset === "number" ? translate(charOffset) : undefined);
+      },
+      onHighlightSentence: (startWord: ParsedWord, endWord: ParsedWord): boolean => {
+        if (editor.getValue() !== expected) return false;
+        if (!Number.isInteger(startWord.charOffset) || !Number.isInteger(endWord.charOffset)) return false;
+        const first = words.findIndex(word => word.charOffset === startWord.charOffset && word.raw === startWord.raw);
+        const last = words.findIndex(word => word.charOffset === endWord.charOffset && word.raw === endWord.raw);
+        if (first < 0 || last < first) return false;
+        const core = endWord.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+        let start = words[first].sourceStartOffset ?? startWord.charOffset!;
+        let end = words[last].sourceEndOffset ?? words[last].charEndOffset ?? endWord.charOffset! + core.length;
+        // Nested wrappers can become reachable only after an inner expansion.
+        let expanded: boolean;
+        do {
+          expanded = false;
+          for (const range of wrappers) {
+            if (range.start < start && start < range.end) { start = range.start; expanded = true; }
+            if (range.start < end && end < range.end) { end = range.end; expanded = true; }
+          }
+        } while (expanded);
+        let visible = cleanMarkdown(source.slice(start, end), options.readCodeBlocks);
+        const leading = startWord.raw.match(/^[^\p{L}\p{N}]*/u)?.[0] ?? "";
+        const trailing = endWord.raw.match(/[^\p{L}\p{N}]*$/u)?.[0] ?? "";
+        if (!visible.startsWith(startWord.raw)) {
+          // Literal punctuation may already be inside the expanded wrapper.
+          // A one-word sentence can still be missing its external suffix too.
+          const firstStem = startWord.raw.replace(/[^\p{L}\p{N}]+$/u, "");
+          for (let length = 1; length <= leading.length; length++) {
+            const prefix = leading.slice(0, length);
+            if (visible.startsWith(firstStem.slice(length)) && source.slice(start - length, start) === prefix) {
+              start -= length;
+              visible = cleanMarkdown(source.slice(start, end), options.readCodeBlocks);
+              break;
+            }
+          }
+        }
+        if (!visible.endsWith(endWord.raw)) {
+          // Some raw punctuation is literal code already inside the wrapper;
+          // append only the missing suffix that actually follows it in source.
+          for (let length = 1; length <= trailing.length; length++) {
+            const suffix = trailing.slice(-length);
+            if (visible.endsWith(endWord.raw.slice(0, -length)) && source.slice(end, end + length) === suffix) {
+              end += length;
+              break;
+            }
+          }
+        }
+        if (start < 0 || end > source.length || end <= start) return false;
+        const slice = source.slice(start, end);
+        if (!slice.trim() || !safeHighlightRange(start, end)) return false;
+        const selected = parseWords(slice, options);
+        const original = words.slice(first, last + 1);
+        if (selected.length !== original.length || selected.some((word, index) => word.raw !== original[index].raw)) return false;
+        if (highlights.some(range => range.start === start && range.end === end)) return true;
+        if (highlights.some(range => start < range.end && end > range.start)) return false;
+        if (slice.startsWith("==") && slice.endsWith("==")) return true;
+        const highlightedWords = parseWords(`==${slice}==`, options);
+        if (highlightedWords.length !== original.length || highlightedWords.some((word, index) => word.raw !== original[index].raw)) return false;
+        const from = translate(start);
+        const to = translate(end, true);
+        const wrapped = `==${expected.slice(from, to)}==`;
+        const next = expected.slice(0, from) + wrapped + expected.slice(to);
+        if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
+          editor.replaceRange(wrapped, editor.offsetToPos(from), editor.offsetToPos(to));
+        } else if (typeof editor.setValue === "function") {
+          editor.setValue(next);
+        } else return false;
+        if (editor.getValue() !== next) return false;
+        expected = next;
+        highlights.push({ start, end });
+        return true;
+      },
+    };
   }
 
   private syncEditorCursor(editor: Editor, rawWord: string, charOffset?: number) {
@@ -504,15 +578,50 @@ export default class SpeedReaderPlugin extends Plugin {
 
   async loadSettings() {
     const data: unknown = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data as Partial<SpeedReaderSettings> | null);
-    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, this.settings.stats);
+    const saved = data && typeof data === "object" && !Array.isArray(data)
+      ? data as Record<string, unknown> : {};
+    this.settings = { ...DEFAULT_SETTINGS };
+    const choices: Partial<Record<keyof SpeedReaderSettings, readonly unknown[]>> = {
+      uiLanguage: ["auto", "en", "ru"], readerFont: ["theme", "golos", "atkinson"],
+      themeMode: ["default", "dark", "light", "sepia"], redicleAlignment: ["spritz", "center"],
+      ttsProvider: ["system", "unrealspeech"], unrealSpeechVoiceId: UNREAL_SPEECH_VOICES,
+      chunkSize: [1, 2, 3], orpWidth: [1, 2, 3],
+    };
+    for (const key of Object.keys(DEFAULT_SETTINGS) as (keyof SpeedReaderSettings)[]) {
+      const fallback = DEFAULT_SETTINGS[key];
+      const value = saved[key];
+      if (typeof fallback === "object" || typeof value !== typeof fallback) continue;
+      if (typeof value === "number" && (!Number.isFinite(value) ||
+        (key === "unrealSpeechCharsUsed" ? value < 0 : value <= 0))) continue;
+      if (choices[key] && !choices[key].includes(value)) continue;
+      if ((key === "rewindOnPauseWords" || key === "rampUpWords" ||
+        key === "autoAccelerateIntervalWords" || key === "stepWordCount") && !Number.isSafeInteger(value)) continue;
+      if (key === "stepWordCount" && (value as number) > 50) continue;
+      Object.assign(this.settings, { [key]: value });
+    }
+    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, saved.stats);
     for (const key of Object.keys(DEFAULT_SETTINGS.stats) as (keyof SpeedReaderSettings["stats"])[]) {
       const value = this.settings.stats[key];
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
         this.settings.stats[key] = DEFAULT_SETTINGS.stats[key];
       }
     }
-    this.settings.noteProgress = { ...this.settings.noteProgress };
+    this.settings.noteProgress = {};
+    const progress = saved.noteProgress;
+    if (progress && typeof progress === "object" && !Array.isArray(progress)) {
+      for (const key of Object.keys(progress)) {
+        const value = (progress as Record<string, unknown>)[key];
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const record = value as Record<string, unknown>;
+        const { index, totalWords, timestamp } = record;
+        if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 ||
+          typeof totalWords !== "number" || !Number.isSafeInteger(totalWords) || totalWords < index ||
+          typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp < 0) continue;
+        Object.defineProperty(this.settings.noteProgress, key, {
+          value: { index, totalWords, timestamp }, enumerable: true, writable: true, configurable: true,
+        });
+      }
+    }
   }
 
   async saveSettings() {

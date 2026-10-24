@@ -326,10 +326,10 @@ async function synthesizeSpeech(text, options, fetchImpl) {
   if (!request) {
     throw new UnrealSpeechError("network", "\u0412 \u044D\u0442\u043E\u043C \u043E\u043A\u0440\u0443\u0436\u0435\u043D\u0438\u0438 \u043D\u0435\u0442 fetch \u0434\u043B\u044F \u0437\u0430\u043F\u0440\u043E\u0441\u043E\u0432 \u043A Unreal Speech.");
   }
-  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
-  const timeout = controller ? window.setTimeout(() => controller.abort(), 2e4) : 0;
   const response = await limiter.schedule(async () => {
     var _a;
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const timeout = controller ? window.setTimeout(() => controller.abort(), 2e4) : 0;
     try {
       return await request(UNREAL_SPEECH_ENDPOINT, {
         method: "POST",
@@ -340,7 +340,7 @@ async function synthesizeSpeech(text, options, fetchImpl) {
         signal: controller == null ? void 0 : controller.signal,
         body: JSON.stringify({
           Text: payloadText,
-          VoiceId: options.voiceId || "Scarlett",
+          VoiceId: options.voiceId || "Amelia",
           Bitrate: options.bitrate || "192k",
           Speed: wpmToSpeechSpeed((_a = options.wpm) != null ? _a : 300),
           Pitch: "1",
@@ -896,84 +896,293 @@ var import_obsidian2 = require("obsidian");
 function cleanMarkdown(text, readCodeBlocks = false) {
   return cleanMarkdownWithOffsets(text, readCodeBlocks).text;
 }
+function findFencedCodeRanges(text) {
+  const ranges = [];
+  let open = null;
+  const lines = /[^\n]*(?:\n|$)/g;
+  let match;
+  while ((match = lines.exec(text)) !== null && match[0].length > 0) {
+    const line = match[0].replace(/\r?\n$/, "");
+    const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
+    if (!delimiter) continue;
+    if (open) {
+      if (delimiter[1][0] === open.marker && delimiter[1].length >= open.length && !delimiter[2].trim()) {
+        ranges.push({
+          start: open.start,
+          openingEnd: open.openingEnd,
+          closingStart: match.index,
+          end: match.index + line.length
+        });
+        open = null;
+      }
+    } else if (delimiter[1][0] !== "`" || !delimiter[2].includes("`")) {
+      open = {
+        marker: delimiter[1][0],
+        length: delimiter[1].length,
+        start: match.index,
+        openingEnd: match.index + line.length
+      };
+    }
+  }
+  if (open) ranges.push({
+    start: open.start,
+    openingEnd: open.openingEnd,
+    closingStart: text.length,
+    end: text.length
+  });
+  return ranges;
+}
+function findFrontmatterEnd(text) {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(text);
+  return frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1]) ? frontmatter[0].length : 0;
+}
+function findInlineCodeRanges(text) {
+  var _a;
+  const bodyStart = findFrontmatterEnd(text);
+  const fences = [];
+  const delimiters = /^ {0,3}(`{3,}|~{3,})([^\r\n]*)/gm;
+  delimiters.lastIndex = bodyStart;
+  let match;
+  while ((match = delimiters.exec(text)) !== null) {
+    if (match[1][0] === "`" && match[2].includes("`")) continue;
+    fences.push({
+      start: match.index,
+      markerStart: match.index + match[0].indexOf(match[1]),
+      end: delimiters.lastIndex,
+      marker: match[1][0],
+      length: match[1].length,
+      canClose: !match[2].trim()
+    });
+  }
+  const runs = [];
+  const pattern = /`+/g;
+  pattern.lastIndex = bodyStart;
+  while ((match = pattern.exec(text)) !== null) {
+    runs.push({ start: match.index, end: match.index + match[0].length });
+  }
+  const next = new Array(runs.length).fill(-1);
+  const byLength = /* @__PURE__ */ new Map();
+  for (let index = runs.length - 1; index >= 0; index--) {
+    const length = runs[index].end - runs[index].start;
+    next[index] = (_a = byLength.get(length)) != null ? _a : -1;
+    byLength.set(length, index);
+  }
+  const ranges = [];
+  const byStart = new Map(runs.map((run, index) => [run.start, index]));
+  const events = /<!--|%%|^ {0,3}~{3,}|`+/gm;
+  events.lastIndex = bodyStart;
+  let fenceIndex = 0;
+  while ((match = events.exec(text)) !== null) {
+    while (fenceIndex < fences.length && fences[fenceIndex].markerStart < match.index) fenceIndex++;
+    const fence = fences[fenceIndex];
+    if (fence && fence.start <= match.index) {
+      events.lastIndex = text.length;
+      for (fenceIndex++; fenceIndex < fences.length; fenceIndex++) {
+        const closing2 = fences[fenceIndex];
+        if (closing2.marker === fence.marker && closing2.length >= fence.length && closing2.canClose) {
+          events.lastIndex = closing2.end;
+          fenceIndex++;
+          break;
+        }
+      }
+      continue;
+    }
+    if (match[0] === "<!--" || match[0] === "%%") {
+      const closingMarker = match[0] === "<!--" ? "-->" : "%%";
+      const closing2 = text.indexOf(closingMarker, events.lastIndex);
+      if (closing2 >= 0) events.lastIndex = closing2 + closingMarker.length;
+      continue;
+    }
+    const index = byStart.get(match.index);
+    if (index === void 0) continue;
+    let escaped = 0;
+    for (let before = runs[index].start - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escaped++;
+    if (escaped % 2 || next[index] < 0) continue;
+    const closing = next[index];
+    if (fenceIndex < fences.length && fences[fenceIndex].start <= runs[closing].start) continue;
+    ranges.push({
+      start: runs[index].start,
+      contentStart: runs[index].end,
+      contentEnd: runs[closing].start,
+      end: runs[closing].end
+    });
+    events.lastIndex = runs[closing].end;
+  }
+  return ranges;
+}
 function cleanMarkdownWithOffsets(text, readCodeBlocks = false) {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
-  const replace = (pattern, replacement) => {
+  const wrappers = [];
+  let inlineCode = [];
+  const inlineCodeAt = (offset, end = offset + 1) => {
+    if (end <= offset) return void 0;
+    let low = 0, high = inlineCode.length;
+    while (low < high) {
+      const middle = Math.floor((low + high) / 2);
+      if (inlineCode[middle].end <= offset) low = middle + 1;
+      else high = middle;
+    }
+    const range = inlineCode[low];
+    return range && range.start < end ? range : void 0;
+  };
+  const replace = (pattern, replacement, allowEnclosingCode = true) => {
+    var _a, _b, _c, _d;
     if (!new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "")).test(cleaned)) return;
     const nextOffsets = [];
     const appendOffsets = (start2, end2) => {
       for (let index = start2; index < end2; index++) nextOffsets.push(offsets[index]);
     };
+    const scanner = new RegExp(pattern.source, pattern.flags.replace(/[gd]/g, "") + "gd");
+    const parts = [];
+    const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
     let end = 0;
-    cleaned = cleaned.replace(pattern, (...args) => {
-      var _a, _b;
-      const match = args[0];
-      const start2 = args[args.length - 2];
-      appendOffsets(end, start2);
-      end = start2 + match.length;
-      if (!replacement) return "";
-      const groupMatch = /^\$(\d+)([\s\S]*)$/.exec(replacement);
-      if (!groupMatch) {
-        for (let i = 0; i < replacement.length; i++) nextOffsets.push((_a = offsets[start2]) != null ? _a : 0);
-        return replacement;
+    let match;
+    while ((match = scanner.exec(cleaned)) !== null) {
+      const start2 = match.index;
+      const matchEnd = start2 + match[0].length;
+      const retained = groupMatch ? match.indices[Number(groupMatch[1])] : void 0;
+      const protectedRange = (_b = (_a = inlineCodeAt(offsets[start2])) != null ? _a : inlineCodeAt(offsets[matchEnd - 1])) != null ? _b : allowEnclosingCode ? void 0 : inlineCodeAt(offsets[start2], offsets[matchEnd - 1] + 1);
+      if (protectedRange) {
+        let nextStart = start2;
+        while (nextStart < offsets.length && offsets[nextStart] < protectedRange.end) nextStart++;
+        scanner.lastIndex = Math.max(start2 + 1, nextStart);
+        continue;
       }
-      const group = Number(groupMatch[1]);
-      const suffix = groupMatch[2];
-      const flags = pattern.flags.replace(/[gd]/g, "") + "d";
-      const localPattern = new RegExp(pattern.source, flags);
-      const localMatch = localPattern.exec(match);
-      const range = localMatch.indices[group];
-      appendOffsets(start2 + range[0], start2 + range[1]);
-      if (!suffix) return args[group];
-      for (let i = 0; i < suffix.length; i++) nextOffsets.push((_b = offsets[start2 + range[1] - 1]) != null ? _b : 0);
-      return String(args[group]) + suffix;
-    });
+      parts.push(cleaned.slice(end, start2));
+      appendOffsets(end, start2);
+      if (retained && retained[1] > retained[0] && (groupMatch == null ? void 0 : groupMatch[2]) === "") {
+        wrappers.push({ start: offsets[start2], end: offsets[matchEnd - 1] + 1 });
+      }
+      end = matchEnd;
+      if (replacement) {
+        if (groupMatch && retained) {
+          const group = Number(groupMatch[1]);
+          const suffix = groupMatch[2];
+          appendOffsets(retained[0], retained[1]);
+          for (let index = 0; index < suffix.length; index++) nextOffsets.push((_c = offsets[retained[1] - 1]) != null ? _c : 0);
+          parts.push(match[group] + suffix);
+        } else {
+          for (let index = 0; index < replacement.length; index++) nextOffsets.push((_d = offsets[start2]) != null ? _d : 0);
+          parts.push(replacement);
+        }
+      }
+      if (!pattern.global) break;
+      if (!match[0].length) scanner.lastIndex++;
+    }
+    parts.push(cleaned.slice(end));
     appendOffsets(end, offsets.length);
+    cleaned = parts.join("");
     offsets = nextOffsets;
   };
-  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(cleaned);
-  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
-    replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
+  const frontmatterEnd = findFrontmatterEnd(cleaned);
+  if (frontmatterEnd) {
+    cleaned = cleaned.slice(frontmatterEnd);
+    offsets = offsets.slice(frontmatterEnd);
   }
+  inlineCode = findInlineCodeRanges(text);
+  wrappers.push(...inlineCode.map(({ start: start2, end }) => ({ start: start2, end })));
   replace(/%%[\s\S]*?%%/g, "");
   replace(/<!--[\s\S]*?-->/g, "");
-  if (readCodeBlocks) {
-    replace(/^[ \t]*```[^\n]*$/gm, "");
-  } else {
-    replace(/```[\s\S]*?```/g, "");
+  const codeRanges = findFencedCodeRanges(cleaned);
+  if (codeRanges.length > 0) {
+    const removed = [];
+    for (const range of codeRanges) {
+      if (readCodeBlocks) removed.push(
+        { start: range.start, end: range.openingEnd },
+        { start: range.closingStart, end: range.end }
+      );
+      else removed.push({ start: range.start, end: range.end });
+    }
+    const parts = [];
+    const nextOffsets = [];
+    let cursor = 0;
+    for (const range of [...removed, { start: cleaned.length, end: cleaned.length }]) {
+      parts.push(cleaned.slice(cursor, range.start));
+      for (let index = cursor; index < range.start; index++) nextOffsets.push(offsets[index]);
+      cursor = range.end;
+    }
+    cleaned = parts.join("");
+    offsets = nextOffsets;
   }
-  replace(/\$\$[\s\S]*?\$\$/g, "");
-  replace(/\\\[[\s\S]*?\\\]/g, "");
-  replace(/\\\(([\s\S]*?)\\\)/g, "$1");
-  replace(/\$([^$\n]{1,40})\$/g, "$1");
-  replace(/\$[^$]*\$/g, "");
-  replace(/`([^`]+)`/g, "$1");
+  replace(/\$\$[\s\S]*?\$\$/g, "", false);
+  replace(/\\\[[\s\S]*?\\\]/g, "", false);
+  replace(/\\\(([\s\S]*?)\\\)/g, "$1", false);
+  replace(/(?<!\$)\$([^$\n]{1,40})\$(?!\$)/g, "$1", false);
+  replace(/(?<!\$)\$[^$]+\$(?!\$)/g, "", false);
   replace(/!\[\[.*?\]\]/g, "");
   replace(/!\[.*?\]\(.*?\)/g, "");
   replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
   replace(/\[\^[^\]]+\]:?/g, "");
   replace(/<\/?[a-zA-Z][^>]*>/g, "");
   replace(/^\s*>\s*\[![^\]]+\][+-]?\s*/gm, "");
-  replace(/==([^=]+)==/g, "$1");
+  const highlightMarkers = /==|\r?\n[ \t]*\r?\n/g;
+  const highlightDelimiters = /* @__PURE__ */ new Set();
+  let highlightStart = -1;
+  let highlightMarker;
+  while ((highlightMarker = highlightMarkers.exec(cleaned)) !== null) {
+    if (highlightMarker[0] !== "==") {
+      highlightStart = -1;
+      continue;
+    }
+    const index = highlightMarker.index;
+    if (inlineCodeAt(offsets[index]) || inlineCodeAt(offsets[index + 1])) continue;
+    let escapes = 0;
+    for (let before = offsets[index] - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escapes++;
+    if (escapes % 2) continue;
+    if (highlightStart >= 0 && !/\s/.test(cleaned[index - 1])) {
+      wrappers.push({ start: offsets[highlightStart], end: offsets[index + 1] + 1 });
+      for (const position of [highlightStart, highlightStart + 1, index, index + 1]) highlightDelimiters.add(position);
+      highlightStart = -1;
+    } else if (highlightStart < 0 && index + 2 < cleaned.length && !/\s/.test(cleaned[index + 2])) {
+      highlightStart = index;
+    }
+  }
+  if (highlightDelimiters.size) {
+    const characters = [];
+    const retainedOffsets = [];
+    for (let index = 0; index < cleaned.length; index++) {
+      if (highlightDelimiters.has(index)) continue;
+      characters.push(cleaned[index]);
+      retainedOffsets.push(offsets[index]);
+    }
+    cleaned = characters.join("");
+    offsets = retainedOffsets;
+  }
+  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
   replace(/^#{1,6}\s+/gm, "");
   replace(/(\*\*|__)(.*?)\1/g, "$2");
   replace(/\*([^*\n]+)\*/g, "$1");
   replace(/(?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}])/gu, "$1");
   replace(/~~(.*?)~~/g, "$1");
   replace(/^\s*>\s*/gm, "");
-  replace(/^[ \t]*\|[-:| \t]+\|[ \t]*$/gm, "");
+  replace(/^[ \t]*\|[-:| \t]*\|[ \t]*$/gm, "");
   replace(/^[ \t]*\|(.*?)\|[ \t]*$/gm, "$1 ,");
   replace(/[ \t]*\|[ \t]*/g, " ");
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
   replace(/^\s*[-*+]\s+/gm, "");
   replace(/^\s*\d+\.\s+/gm, "");
   replace(/^\s*[-*_]{3,}\s*$/gm, "");
+  const delimiters = /* @__PURE__ */ new Set();
+  for (const range of inlineCode) {
+    for (let index = range.start; index < range.contentStart; index++) delimiters.add(index);
+    for (let index = range.contentEnd; index < range.end; index++) delimiters.add(index);
+  }
+  if (delimiters.size > 0) {
+    const characters = [];
+    const retainedOffsets = [];
+    for (let index = 0; index < cleaned.length; index++) {
+      if (delimiters.has(offsets[index])) continue;
+      characters.push(cleaned[index]);
+      retainedOffsets.push(offsets[index]);
+    }
+    cleaned = characters.join("");
+    offsets = retainedOffsets;
+  }
   const start = cleaned.match(/^\s*/)[0].length;
   const trimmed = cleaned.trim();
-  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length) };
+  return { text: trimmed, offsets: offsets.slice(start, start + trimmed.length), wrappers };
 }
 function getOrpIndex(word) {
   const match = word.match(/^([^\p{L}\p{N}]*)([\p{L}\p{N}].*?)([^\p{L}\p{N}]*)$/u);
@@ -1020,27 +1229,39 @@ function splitWordForOrp(token, width = 1) {
   };
 }
 function parseWords(text, options) {
+  return parseDocument(text, options).words;
+}
+function parseDocument(text, options) {
   var _a, _b, _c;
-  const { text: cleaned, offsets } = cleanMarkdownWithOffsets(text, (_a = options.readCodeBlocks) != null ? _a : false);
-  if (!cleaned.trim()) return [];
+  const { text: cleaned, offsets, wrappers } = cleanMarkdownWithOffsets(text, (_a = options.readCodeBlocks) != null ? _a : false);
+  if (!cleaned.trim()) return { words: [], wrappers };
   const paragraphs = cleaned.split(/\n\s*\n+/).filter((p) => p.trim().length > 0);
   const result = [];
-  let searchFrom = 0;
+  let paragraphSearchFrom = 0;
   for (let pIdx = 0; pIdx < paragraphs.length; pIdx++) {
     const paragraph = paragraphs[pIdx];
-    const rawTokens = paragraph.split(/\s+/).filter((w) => w.length > 0);
+    const paragraphStart = cleaned.indexOf(paragraph, paragraphSearchFrom);
+    paragraphSearchFrom = paragraphStart + paragraph.length;
     const mergedTokens = [];
-    for (const token of rawTokens) {
+    const tokenPattern = /\S+/g;
+    let tokenMatch;
+    while ((tokenMatch = tokenPattern.exec(paragraph)) !== null) {
+      const token = tokenMatch[0];
+      const start = paragraphStart + tokenMatch.index;
+      const end = start + token.length;
       const hasWordChar = /[\p{L}\p{N}]/u.test(token);
       if (!hasWordChar && mergedTokens.length > 0) {
-        mergedTokens[mergedTokens.length - 1] += ` ${token}`;
+        const previous = mergedTokens[mergedTokens.length - 1];
+        previous.raw += ` ${token}`;
+        previous.end = end;
       } else if (hasWordChar) {
-        mergedTokens.push(token);
+        mergedTokens.push({ raw: token, start, end });
       }
     }
     const isLastParagraph = pIdx === paragraphs.length - 1;
     for (let tIdx = 0; tIdx < mergedTokens.length; tIdx++) {
-      const token = mergedTokens[tIdx];
+      const visibleToken = mergedTokens[tIdx];
+      const token = visibleToken.raw;
       const isParagraphEnd = tIdx === mergedTokens.length - 1 && !isLastParagraph;
       const { prefix, focusChar, suffix } = splitWordForOrp(token, (_b = options.orpWidth) != null ? _b : 1);
       const coreWord = token.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
@@ -1072,11 +1293,13 @@ function parseWords(text, options) {
       }
       const delayMultiplier = Math.round(lengthMultiplier * punctMultiplier * 100) / 100;
       let charOffset;
+      let charEndOffset;
       if (coreWord.length > 0) {
-        const found = cleaned.indexOf(coreWord, searchFrom);
-        if (found !== -1) {
+        const prefixLength = token.match(/^[^\p{L}\p{N}]*/u)[0].length;
+        const found = visibleToken.start + prefixLength;
+        if (cleaned.slice(found, found + coreWord.length) === coreWord) {
           charOffset = offsets[found];
-          searchFrom = found + coreWord.length;
+          charEndOffset = offsets[found + coreWord.length - 1] + 1;
         }
       }
       result.push({
@@ -1086,34 +1309,52 @@ function parseWords(text, options) {
         suffix,
         delayMultiplier,
         isParagraphEnd,
-        charOffset
+        charOffset,
+        charEndOffset,
+        sourceStartOffset: offsets[visibleToken.start],
+        sourceEndOffset: offsets[visibleToken.end - 1] + 1
       });
     }
   }
-  return result;
+  return { words: result, wrappers };
 }
 function findWordIndexAtOffset(words, targetOffset) {
+  var _a;
   if (words.length === 0 || targetOffset <= 0) return 0;
   for (let index = 0; index < words.length; index++) {
     const offset = words[index].charOffset;
-    if (typeof offset === "number" && offset >= targetOffset) return index;
+    if (typeof offset !== "number") continue;
+    if (offset >= targetOffset) return index;
+    const end = (_a = words[index].charEndOffset) != null ? _a : offset + words[index].raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "").length;
+    if (targetOffset < end) return index;
   }
   return words.length - 1;
 }
 function extractHeadings(text, words) {
   if (!text || words.length === 0) return [];
   const headings = [];
-  const headingPattern = /^(#{1,6})\s+(.+?)\s*$/gm;
-  let match;
-  while ((match = headingPattern.exec(text)) !== null) {
+  let source = text.replace(/%%[\s\S]*?%%|<!--[\s\S]*?-->/g, (hidden) => hidden.replace(/[^\r\n]/g, " "));
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+  if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
+    source = frontmatter[0].replace(/[^\r\n]/g, " ") + source.slice(frontmatter[0].length);
+  }
+  const codeRanges = findFencedCodeRanges(source);
+  let codeIndex = 0;
+  let lineOffset = 0;
+  for (const line of source.split("\n")) {
+    const offset = lineOffset;
+    lineOffset += line.length + 1;
+    while (codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].end) codeIndex++;
+    if (codeIndex < codeRanges.length && offset >= codeRanges[codeIndex].start) continue;
+    const match = /^(#{1,6})[ \t]+(.+?)[ \t\r]*$/.exec(line);
+    if (!match) continue;
     const title = cleanMarkdown(match[2]).trim();
     if (!title) continue;
-    headings.push({
-      level: match[1].length,
-      title,
-      charOffset: match.index,
-      wordIndex: findWordIndexAtOffset(words, match.index)
-    });
+    const titleOffset = offset + match[1].length;
+    const wordIndex = findWordIndexAtOffset(words, titleOffset);
+    const wordOffset = words[wordIndex].charOffset;
+    if (wordOffset === void 0 || wordOffset < titleOffset || wordOffset >= offset + line.length) continue;
+    headings.push({ level: match[1].length, title, charOffset: offset, wordIndex });
   }
   return headings;
 }
@@ -1162,6 +1403,7 @@ var I18N = {
     tocPlaceholder: "\u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u0440\u0430\u0437\u0434\u0435\u043B\u0443\u2026",
     ttsEnabledNotice: "\u{1F50A} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u043A\u043B\u044E\u0447\u0435\u043D\u0430",
     ttsDisabledNotice: "\u{1F507} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u0430",
+    ttsUsageSaveFailedNotice: "\u26A0\uFE0F \u041D\u0435 \u0443\u0434\u0430\u043B\u043E\u0441\u044C \u0441\u043E\u0445\u0440\u0430\u043D\u0438\u0442\u044C \u0441\u0447\u0451\u0442\u0447\u0438\u043A \u0441\u0438\u043C\u0432\u043E\u043B\u043E\u0432 \u043E\u0437\u0432\u0443\u0447\u043A\u0438.",
     highlightedNotice: "\u2728 \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043E \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0435",
     highlightCopiedNotice: "\u{1F4CB} \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E \u0432 \u0431\u0443\u0444\u0435\u0440 \u043E\u0431\u043C\u0435\u043D\u0430",
     pauseTitleText: "\u23F8 \u041F\u0430\u0443\u0437\u0430",
@@ -1199,6 +1441,7 @@ var I18N = {
     tocPlaceholder: "Jump to heading\u2026",
     ttsEnabledNotice: "\u{1F50A} Text-to-speech enabled",
     ttsDisabledNotice: "\u{1F507} Text-to-speech disabled",
+    ttsUsageSaveFailedNotice: "\u26A0\uFE0F Could not save the speech usage counter.",
     highlightedNotice: "\u2728 Sentence highlighted in note",
     highlightCopiedNotice: "\u{1F4CB} Sentence copied to clipboard",
     pauseTitleText: "\u23F8 Paused",
@@ -1232,10 +1475,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     /** Token that invalidates in-flight cloud speech when playback stops. */
     this.speechToken = 0;
     this.audioEl = null;
+    this.finishAudio = null;
     this.speechObjectUrl = null;
     this.speechFallbackNoticeShown = false;
+    this.useSystemFallback = false;
+    this.finishSystemSpeech = null;
     /** True while a cloud sentence is being fetched or played. */
     this.speechBusy = false;
+    this.speechQueue = [];
     // Session stats & ramp-up tracking
     this.sessionWordsRead = 0;
     this.sessionMaxWpm = 0;
@@ -1606,7 +1853,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     if (btn) {
       (0, import_obsidian2.setIcon)(btn, this.settings.enableTts ? "volume-2" : "volume-x");
     }
-    new import_obsidian2.Notice(this.settings.enableTts ? "\u{1F50A} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u043A\u043B\u044E\u0447\u0435\u043D\u0430" : "\u{1F507} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u0430");
+    new import_obsidian2.Notice(this.settings.enableTts ? this.t.ttsEnabledNotice : this.t.ttsDisabledNotice);
     if (!this.settings.enableTts) {
       this.stopTts();
     } else if (this.isPlaying) {
@@ -1637,49 +1884,78 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
   async speakWithUnrealSpeech(text) {
+    this.speechQueue.push(text);
     if (this.speechBusy) return;
     const token = this.speechToken;
     this.speechBusy = true;
-    const chunks = splitForSpeech(text);
     try {
-      for (const chunk of chunks) {
-        if (token !== this.speechToken || !this.isPlaying) return;
-        try {
-          const audioBytes = await synthesizeSpeech(chunk, {
-            apiKey: this.settings.unrealSpeechApiKey,
-            voiceId: this.settings.unrealSpeechVoiceId,
-            wpm: this.currentWpm
-          });
-          this.settings.unrealSpeechCharsUsed += chunk.length;
-          if (token !== this.speechToken || !this.isPlaying) return;
-          await this.playAudioBytes(audioBytes, token);
-        } catch (error) {
-          if (token !== this.speechToken) return;
-          this.reportSpeechError(error, text);
-          return;
+      while (token === this.speechToken && (this.isPlaying || this.completed) && this.speechQueue.length > 0) {
+        const sentence = this.speechQueue.shift();
+        if (this.useSystemFallback) {
+          await this.speakSystemFallback(sentence, token);
+          continue;
+        }
+        const chunks = splitForSpeech(sentence);
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+          const chunk = chunks[chunkIndex];
+          if (token !== this.speechToken || !this.isPlaying && !this.completed) return;
+          try {
+            const audioBytes = await synthesizeSpeech(chunk, {
+              apiKey: this.settings.unrealSpeechApiKey,
+              voiceId: this.settings.unrealSpeechVoiceId,
+              wpm: this.currentWpm
+            });
+            this.settings.unrealSpeechCharsUsed += chunk.length;
+            try {
+              await this.plugin.saveSettings();
+            } catch (e) {
+              new import_obsidian2.Notice(this.t.ttsUsageSaveFailedNotice);
+            }
+            if (token !== this.speechToken || !this.isPlaying && !this.completed) return;
+            await this.playAudioBytes(audioBytes, token);
+          } catch (error) {
+            if (token !== this.speechToken) return;
+            this.useSystemFallback = true;
+            this.reportSpeechError(error);
+            await this.speakSystemFallback(chunks.slice(chunkIndex).join(" "), token);
+            break;
+          }
         }
       }
     } finally {
-      this.speechBusy = false;
+      if (token === this.speechToken) this.speechBusy = false;
     }
   }
-  /** Plays MP3 bytes and resolves when the chunk ends. */
+  /** Ends/cancellation resolve; media failures reject into ordered fallback. */
   playAudioBytes(bytes, token) {
     if (typeof Audio === "undefined") return Promise.resolve();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
       this.speechObjectUrl = url;
       const audio = new Audio(url);
       this.audioEl = audio;
-      const finish = () => {
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        audio.onended = null;
+        audio.onerror = null;
+        if (error) audio.pause();
+        if (this.finishAudio === finish) this.finishAudio = null;
         URL.revokeObjectURL(url);
         if (this.speechObjectUrl === url) this.speechObjectUrl = null;
         if (this.audioEl === audio) this.audioEl = null;
-        resolve();
+        if (error) reject(error);
+        else resolve();
       };
-      audio.onended = finish;
-      audio.onerror = finish;
-      audio.play().catch(finish);
+      this.finishAudio = finish;
+      audio.onended = () => finish();
+      audio.onerror = () => finish(new Error("Audio playback failed"));
+      try {
+        void audio.play().catch(() => finish(new Error("Audio playback rejected")));
+      } catch (e) {
+        finish(new Error("Audio playback failed"));
+      }
       if (token !== this.speechToken) {
         audio.pause();
         finish();
@@ -1687,6 +1963,12 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     });
   }
   cancelAudio() {
+    var _a;
+    if (this.finishAudio) {
+      (_a = this.audioEl) == null ? void 0 : _a.pause();
+      this.finishAudio();
+      return;
+    }
     if (this.audioEl) {
       this.audioEl.pause();
       this.audioEl = null;
@@ -1697,7 +1979,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     }
   }
   /** Reports quota/key problems once and falls back to the system voice. */
-  reportSpeechError(error, text) {
+  reportSpeechError(error) {
     const speechError = error instanceof UnrealSpeechError ? error : null;
     const message = speechError ? speechError.message : "Unreal Speech \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D.";
     if (!this.speechFallbackNoticeShown) {
@@ -1707,20 +1989,43 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         9e3
       );
     }
-    if (!this.canUseSystemSpeech()) return;
-    try {
+  }
+  /** Resolve on completion or cancellation so only one voice owns the queue. */
+  speakSystemFallback(text, token) {
+    if (!this.canUseSystemSpeech() || token !== this.speechToken) return Promise.resolve();
+    return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = detectSpeechLang(text);
       utterance.rate = Math.max(0.7, Math.min(2.5, this.currentWpm / 190));
-      window.speechSynthesis.speak(utterance);
-    } catch (e) {
-    }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        utterance.onend = null;
+        utterance.onerror = null;
+        if (this.finishSystemSpeech === finish) this.finishSystemSpeech = null;
+        resolve();
+      };
+      this.finishSystemSpeech = finish;
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch (e) {
+        finish();
+      }
+    });
   }
   canUseSystemSpeech() {
     return typeof window !== "undefined" && "speechSynthesis" in window;
   }
   stopTts() {
+    var _a;
     this.speechToken += 1;
+    this.speechQueue = [];
+    this.speechBusy = false;
+    this.useSystemFallback = false;
+    (_a = this.finishSystemSpeech) == null ? void 0 : _a.call(this);
     this.cancelAudio();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
@@ -1742,6 +2047,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     }
   }
   play() {
+    this.stopTts();
     this.isPlaying = true;
     this.hasInteracted = true;
     this.wordsSinceResume = 0;
@@ -1761,11 +2067,11 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
    * Pauses reader.
    * Feature 1: Rewind on Pause (auto-rewind 3-5 words so context is never lost).
    */
-  pause(triggeredByUser = true) {
+  pause(triggeredByUser = true, drainSpeech = false) {
     this.isPlaying = false;
     this.accumulateActiveTime();
     this.syncZenClass();
-    this.stopTts();
+    if (!drainSpeech) this.stopTts();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -1814,9 +2120,12 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.goToWord(targetIdx);
   }
   goToWord(index) {
+    this.stopTts();
     this.completed = false;
     this.finalChunkStart = null;
     this.hasInteracted = true;
+    this.wordsSinceResume = 0;
+    this.wordsSinceAcceleration = 0;
     this.rewoundWordsDebt = 0;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -1867,17 +2176,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.updateWpmDisplay();
     this.timer = window.setTimeout(() => {
       const consumed = Math.min(stepSize, this.words.length - this.currentIndex);
-      if (this.rewoundWordsDebt > 0) {
-        const absorbed = Math.min(this.rewoundWordsDebt, consumed);
-        this.rewoundWordsDebt -= absorbed;
-        this.sessionWordsRead += consumed - absorbed;
-      } else {
-        this.sessionWordsRead += consumed;
-      }
+      const absorbed = Math.min(this.rewoundWordsDebt, consumed);
+      this.rewoundWordsDebt -= absorbed;
+      const newlyRead = consumed - absorbed;
+      this.sessionWordsRead += newlyRead;
       this.sessionMaxWpm = Math.max(this.sessionMaxWpm, effectiveWpm);
       this.wordsSinceResume += consumed;
       if (this.settings.autoAccelerate && this.settings.autoAccelerateIntervalWords > 0) {
-        this.wordsSinceAcceleration += consumed;
+        this.wordsSinceAcceleration += newlyRead;
         if (this.wordsSinceAcceleration >= this.settings.autoAccelerateIntervalWords) {
           this.wordsSinceAcceleration %= this.settings.autoAccelerateIntervalWords;
           const cap = Math.max(this.currentWpm, this.settings.maxWpmLimit || 600);
@@ -1890,7 +2196,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         this.currentIndex = this.words.length - 1;
         if (stepSize > 1) this.updateWordDisplay();
         else this.updateProgress();
-        this.pause(false);
+        this.pause(false, true);
         return;
       }
       this.currentIndex += consumed;
@@ -2130,10 +2436,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
           content,
           ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note",
           noteKey,
-          {
-            onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
-            onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
-          }
+          this.createEditorCallbacks(editor, content)
         ).open();
       }
     });
@@ -2321,10 +2624,7 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         content,
         ((_d = activeView.file) == null ? void 0 : _d.basename) || "Active Note",
         noteKey,
-        {
-          onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
-          onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
-        }
+        this.createEditorCallbacks(editor, content)
       ).open();
     }
   }
@@ -2352,39 +2652,130 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
     const noteKey = ((_a = view.file) == null ? void 0 : _a.path) || ((_b = view.file) == null ? void 0 : _b.basename) || "Active Note";
     new SpeedReaderModal(this.app, this, content, ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note", noteKey, {
       initialIndex,
-      onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
-      onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
+      ...this.createEditorCallbacks(editor, content)
     }).open();
   }
-  /** Wraps the current sentence in ==highlight== inside the open note. */
-  highlightSentenceInEditor(editor, startWord, endWord) {
-    if (typeof startWord.charOffset !== "number" || typeof endWord.charOffset !== "number") {
-      return false;
+  /** Each reader owns a source snapshot; only its own insertions may move offsets. */
+  createEditorCallbacks(editor, source) {
+    let expected = source;
+    const highlights = [];
+    const options = this.parseOptions();
+    const { words, wrappers } = parseDocument(source, options);
+    let lineOffset = 0;
+    const sourceLines = source.split("\n").map((raw) => {
+      const text = raw.replace(/\r$/, "");
+      const start = lineOffset;
+      lineOffset += raw.length + 1;
+      const pipes = [];
+      for (let index = 0; index < text.length; index++) {
+        if (text[index] !== "|") continue;
+        let escapes = 0;
+        for (let before = index - 1; before >= 0 && text.charCodeAt(before) === 92; before--) escapes++;
+        if (escapes % 2 === 0) pipes.push(start + index);
+      }
+      return { text, start, end: start + text.length, pipes, table: false };
+    });
+    for (let index = 1; index < sourceLines.length; index++) {
+      const line = sourceLines[index];
+      const cells = line.text.trim().replace(/^\||\|$/g, "").split("|");
+      if (!line.pipes.length || !sourceLines[index - 1].pipes.length || !cells.every((cell) => /^:?-+:?$/.test(cell.trim()))) continue;
+      sourceLines[index - 1].table = line.table = true;
+      for (let row = index + 1; row < sourceLines.length && sourceLines[row].pipes.length; row++) sourceLines[row].table = true;
     }
-    const doc = editor.getValue();
-    const leading = (word_ = "") => {
-      var _a, _b;
-      return (_b = (_a = word_.match(/^[^\p{L}\p{N}]*/u)) == null ? void 0 : _a[0].length) != null ? _b : 0;
+    const blockPrefix = /^[ \t]*(?:>|#{1,6}(?:[ \t]+|$)|(?:[-+*]|\d+[.)])[ \t]+|`{3,}|~{3,}|(?:[-*_][ \t]*){3,}$|[=-]+[ \t]*$|\$\$|\\\[|<[/!?a-zA-Z])/;
+    const safeHighlightRange = (start, end) => {
+      const slice = source.slice(start, end);
+      if (/\r?\n[ \t]*\r?\n/.test(slice)) return false;
+      const lines = sourceLines.filter((line) => line.start < end && line.end > start);
+      if (lines.length > 1 && lines.some((line) => line.table || blockPrefix.test(line.text) || /^(?: {4}|\t)/.test(line.text))) return false;
+      return !lines.some((line) => line.table && line.pipes.some((pipe) => start <= pipe && pipe < end));
     };
-    const startOffset = Math.max(0, startWord.charOffset - leading(startWord.raw));
-    const endOffset = Math.min(
-      doc.length,
-      endWord.charOffset - leading(endWord.raw) + endWord.raw.length
+    const translate = (offset, end = false) => offset + highlights.reduce(
+      (shift, range) => shift + (range.start <= offset ? 2 : 0) + (range.end < offset || !end && range.end === offset ? 2 : 0),
+      0
     );
-    if (startOffset < 0 || endOffset <= startOffset) return false;
-    const slice = doc.slice(startOffset, endOffset);
-    if (!slice.trim() || slice.includes("\n\n")) return false;
-    if (doc.slice(Math.max(0, startOffset - 2), startOffset) === "==") return true;
-    const wrapped = `==${slice}==`;
-    if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
-      editor.replaceRange(wrapped, editor.offsetToPos(startOffset), editor.offsetToPos(endOffset));
-      return true;
-    }
-    if (typeof editor.setValue === "function") {
-      editor.setValue(doc.slice(0, startOffset) + wrapped + doc.slice(endOffset));
-      return true;
-    }
-    return false;
+    return {
+      onSyncCursor: (_wordIndex, rawWord, charOffset) => {
+        if (editor.getValue() !== expected) return;
+        this.syncEditorCursor(
+          editor,
+          rawWord,
+          typeof charOffset === "number" ? translate(charOffset) : void 0
+        );
+      },
+      onHighlightSentence: (startWord, endWord) => {
+        var _a, _b, _c, _d, _e, _f, _g;
+        if (editor.getValue() !== expected) return false;
+        if (!Number.isInteger(startWord.charOffset) || !Number.isInteger(endWord.charOffset)) return false;
+        const first = words.findIndex((word) => word.charOffset === startWord.charOffset && word.raw === startWord.raw);
+        const last = words.findIndex((word) => word.charOffset === endWord.charOffset && word.raw === endWord.raw);
+        if (first < 0 || last < first) return false;
+        const core = endWord.raw.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+        let start = (_a = words[first].sourceStartOffset) != null ? _a : startWord.charOffset;
+        let end = (_c = (_b = words[last].sourceEndOffset) != null ? _b : words[last].charEndOffset) != null ? _c : endWord.charOffset + core.length;
+        let expanded;
+        do {
+          expanded = false;
+          for (const range of wrappers) {
+            if (range.start < start && start < range.end) {
+              start = range.start;
+              expanded = true;
+            }
+            if (range.start < end && end < range.end) {
+              end = range.end;
+              expanded = true;
+            }
+          }
+        } while (expanded);
+        let visible = cleanMarkdown(source.slice(start, end), options.readCodeBlocks);
+        const leading = (_e = (_d = startWord.raw.match(/^[^\p{L}\p{N}]*/u)) == null ? void 0 : _d[0]) != null ? _e : "";
+        const trailing = (_g = (_f = endWord.raw.match(/[^\p{L}\p{N}]*$/u)) == null ? void 0 : _f[0]) != null ? _g : "";
+        if (!visible.startsWith(startWord.raw)) {
+          const firstStem = startWord.raw.replace(/[^\p{L}\p{N}]+$/u, "");
+          for (let length = 1; length <= leading.length; length++) {
+            const prefix = leading.slice(0, length);
+            if (visible.startsWith(firstStem.slice(length)) && source.slice(start - length, start) === prefix) {
+              start -= length;
+              visible = cleanMarkdown(source.slice(start, end), options.readCodeBlocks);
+              break;
+            }
+          }
+        }
+        if (!visible.endsWith(endWord.raw)) {
+          for (let length = 1; length <= trailing.length; length++) {
+            const suffix = trailing.slice(-length);
+            if (visible.endsWith(endWord.raw.slice(0, -length)) && source.slice(end, end + length) === suffix) {
+              end += length;
+              break;
+            }
+          }
+        }
+        if (start < 0 || end > source.length || end <= start) return false;
+        const slice = source.slice(start, end);
+        if (!slice.trim() || !safeHighlightRange(start, end)) return false;
+        const selected = parseWords(slice, options);
+        const original = words.slice(first, last + 1);
+        if (selected.length !== original.length || selected.some((word, index) => word.raw !== original[index].raw)) return false;
+        if (highlights.some((range) => range.start === start && range.end === end)) return true;
+        if (highlights.some((range) => start < range.end && end > range.start)) return false;
+        if (slice.startsWith("==") && slice.endsWith("==")) return true;
+        const highlightedWords = parseWords(`==${slice}==`, options);
+        if (highlightedWords.length !== original.length || highlightedWords.some((word, index) => word.raw !== original[index].raw)) return false;
+        const from = translate(start);
+        const to = translate(end, true);
+        const wrapped = `==${expected.slice(from, to)}==`;
+        const next = expected.slice(0, from) + wrapped + expected.slice(to);
+        if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
+          editor.replaceRange(wrapped, editor.offsetToPos(from), editor.offsetToPos(to));
+        } else if (typeof editor.setValue === "function") {
+          editor.setValue(next);
+        } else return false;
+        if (editor.getValue() !== next) return false;
+        expected = next;
+        highlights.push({ start, end });
+        return true;
+      }
+    };
   }
   syncEditorCursor(editor, rawWord, charOffset) {
     if (typeof charOffset === "number" && charOffset >= 0) {
@@ -2469,15 +2860,52 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   }
   async loadSettings() {
     const data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
-    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, this.settings.stats);
+    const saved = data && typeof data === "object" && !Array.isArray(data) ? data : {};
+    this.settings = { ...DEFAULT_SETTINGS };
+    const choices = {
+      uiLanguage: ["auto", "en", "ru"],
+      readerFont: ["theme", "golos", "atkinson"],
+      themeMode: ["default", "dark", "light", "sepia"],
+      redicleAlignment: ["spritz", "center"],
+      ttsProvider: ["system", "unrealspeech"],
+      unrealSpeechVoiceId: UNREAL_SPEECH_VOICES,
+      chunkSize: [1, 2, 3],
+      orpWidth: [1, 2, 3]
+    };
+    for (const key of Object.keys(DEFAULT_SETTINGS)) {
+      const fallback = DEFAULT_SETTINGS[key];
+      const value = saved[key];
+      if (typeof fallback === "object" || typeof value !== typeof fallback) continue;
+      if (typeof value === "number" && (!Number.isFinite(value) || (key === "unrealSpeechCharsUsed" ? value < 0 : value <= 0))) continue;
+      if (choices[key] && !choices[key].includes(value)) continue;
+      if ((key === "rewindOnPauseWords" || key === "rampUpWords" || key === "autoAccelerateIntervalWords" || key === "stepWordCount") && !Number.isSafeInteger(value)) continue;
+      if (key === "stepWordCount" && value > 50) continue;
+      Object.assign(this.settings, { [key]: value });
+    }
+    this.settings.stats = Object.assign({}, DEFAULT_SETTINGS.stats, saved.stats);
     for (const key of Object.keys(DEFAULT_SETTINGS.stats)) {
       const value = this.settings.stats[key];
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
         this.settings.stats[key] = DEFAULT_SETTINGS.stats[key];
       }
     }
-    this.settings.noteProgress = { ...this.settings.noteProgress };
+    this.settings.noteProgress = {};
+    const progress = saved.noteProgress;
+    if (progress && typeof progress === "object" && !Array.isArray(progress)) {
+      for (const key of Object.keys(progress)) {
+        const value = progress[key];
+        if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+        const record = value;
+        const { index, totalWords, timestamp } = record;
+        if (typeof index !== "number" || !Number.isSafeInteger(index) || index < 0 || typeof totalWords !== "number" || !Number.isSafeInteger(totalWords) || totalWords < index || typeof timestamp !== "number" || !Number.isFinite(timestamp) || timestamp < 0) continue;
+        Object.defineProperty(this.settings.noteProgress, key, {
+          value: { index, totalWords, timestamp },
+          enumerable: true,
+          writable: true,
+          configurable: true
+        });
+      }
+    }
   }
   async saveSettings() {
     await this.saveData(this.settings);

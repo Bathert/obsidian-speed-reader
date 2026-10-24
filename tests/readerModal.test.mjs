@@ -241,6 +241,50 @@ test('trainer mode raises the target speed every configured interval up to the c
   assert.equal(h.modal.currentWpm, 315);
 });
 
+test('trainer does not accelerate from repeated rewind-debt words', () => {
+  const h = readerHarness(Array.from({ length: 120 }, (_, i) => `w${i}`).join(' '), {
+    enableRampUp: false, autoAccelerate: true, autoAccelerateStep: 10,
+    autoAccelerateIntervalWords: 50, maxWpmLimit: 600,
+    rewindOnPause: true, rewindOnPauseWords: 3,
+  });
+  h.modal.togglePlay();
+  for (let i = 0; i < 50; i++) h.tick();
+  h.modal.pause(true);
+  assert.equal(h.modal.currentWpm, 310);
+  for (let cycle = 0; cycle < 17; cycle++) {
+    h.modal.togglePlay();
+    for (let i = 0; i < 3; i++) h.tick();
+    h.modal.pause(true);
+  }
+  assert.equal(h.modal.currentIndex, 47);
+  assert.equal(h.modal.sessionWordsRead, 50);
+  assert.equal(h.modal.currentWpm, 310, 'automatic context replays must not accelerate');
+  assert.equal(h.modal.wordsSinceAcceleration, 0);
+  h.modal.togglePlay();
+  for (let i = 0; i < 4; i++) h.tick();
+  assert.equal(h.modal.sessionWordsRead, 51);
+  assert.equal(h.modal.wordsSinceAcceleration, 1, 'new words still advance the trainer');
+});
+
+test('trainer counts only new words in a chunk partially absorbed by rewind debt', () => {
+  const h = readerHarness('a b c d e f g h i j k l m n o', {
+    enableRampUp: false, chunkSize: 3, autoAccelerate: true,
+    autoAccelerateStep: 10, autoAccelerateIntervalWords: 6, maxWpmLimit: 600,
+    rewindOnPause: true, rewindOnPauseWords: 2,
+  });
+  h.modal.togglePlay(); h.tick(); h.modal.pause(true);
+  assert.equal(h.modal.sessionWordsRead, 3);
+  assert.equal(h.modal.rewoundWordsDebt, 2);
+  h.modal.togglePlay(); h.tick();
+  assert.equal(h.modal.sessionWordsRead, 4);
+  assert.equal(h.modal.rewoundWordsDebt, 0);
+  assert.equal(h.modal.wordsSinceAcceleration, 4);
+  assert.equal(h.modal.currentWpm, 300, 'two replayed words must not complete the interval');
+  h.tick();
+  assert.equal(h.modal.currentWpm, 310);
+  assert.equal(h.modal.wordsSinceAcceleration, 1);
+});
+
 test('paused context shows 15 words and clicking one jumps to it', () => {
   const words = Array.from({ length: 30 }, (_, i) => `w${i + 1}`);
   const h = readerHarness(words.join(' '), { enableRampUp: false });
@@ -290,6 +334,34 @@ test('pause widens the context even when rewind is disabled', () => {
   assert.equal(box.all('span').filter(span => span.hasClass('sr-context-word')).length, 14);
 });
 
+for (const playing of [false, true]) {
+  for (const target of [0, 20]) {
+    test(`manual seek to ${target} resets trainer interval while ${playing ? 'playing' : 'paused'}`, () => {
+      const h = readerHarness(Array.from({ length: 40 }, (_, i) => `w${i}`).join(' '), {
+        enableRampUp: false, autoAccelerate: true, autoAccelerateStep: 10,
+        autoAccelerateIntervalWords: 6, maxWpmLimit: 600,
+        rewindOnPause: true, rewindOnPauseWords: 3,
+      });
+      h.modal.togglePlay();
+      for (let i = 0; i < 4; i++) h.tick();
+      h.modal.pause(true);
+      assert.equal(h.modal.rewoundWordsDebt, 3);
+      if (playing) h.modal.togglePlay();
+      h.modal.goToWord(target);
+      assert.equal(h.modal.rewoundWordsDebt, 0);
+      assert.equal(h.modal.wordsSinceResume, 0);
+      assert.equal(h.modal.wordsSinceAcceleration, 0, 'manual seek starts a fresh trainer interval');
+      assert.equal(h.modal.currentWpm, 300, 'seek does not reset target speed');
+      if (!playing) h.modal.togglePlay();
+      for (let i = 0; i < 2; i++) h.tick();
+      assert.equal(h.modal.sessionWordsRead, 6, 'manual re-reading is a new segment, not automatic debt');
+      assert.equal(h.modal.currentWpm, 300, 'old segment cannot trigger an early acceleration');
+      for (let i = 0; i < 4; i++) h.tick();
+      assert.equal(h.modal.currentWpm, 310);
+    });
+  }
+}
+
 test('restart clears the trainer acceleration interval', () => {
   const words = Array.from({ length: 40 }, (_, i) => `w${i + 1}`);
   const h = readerHarness(words.join(' '), {
@@ -305,6 +377,334 @@ test('restart clears the trainer acceleration interval', () => {
   assert.equal(h.modal.wordsSinceAcceleration, 1);
 });
 
+function cloudReader(text = 'One. Two. Three. Four. Five.', runtime = {}) {
+  return readerHarness(text, {
+    enableTts: true, ttsProvider: 'unrealspeech', unrealSpeechApiKey: 'test-only',
+    unrealSpeechVoiceId: 'Scarlett', unrealSpeechCharsUsed: 0, enableRampUp: false,
+    rewindOnPause: false,
+  }, 'book.md', undefined, { cloud: true, ...runtime });
+}
+
+test('cloud audio cancellation settles playback and permits immediate resume', async () => {
+  const h = cloudReader();
+  let audioSettled = false;
+  const playAudioBytes = h.modal.playAudioBytes.bind(h.modal);
+  h.modal.playAudioBytes = (...args) => playAudioBytes(...args).then(() => { audioSettled = true; });
+  h.modal.togglePlay(); await h.flush();
+  h.requests[0].resolve(); await h.flush();
+  assert.equal(h.audios.length, 1);
+  const oldEnd = h.audios[0].onended;
+  h.modal.pause(false); await h.flush();
+  assert.equal(audioSettled, true, 'cancel must resolve the actual audio promise');
+  assert.equal(h.audios[0].paused, true);
+  assert.equal(h.modal.speechBusy, false, 'cancelled audio must settle the cloud run');
+  h.advance(1000); h.modal.togglePlay(); await h.flush();
+  assert.equal(h.requests.length, 2, 'resume must start cloud speech again');
+  h.requests[1].resolve(); await h.flush();
+  oldEnd(); await h.flush();
+  assert.equal(h.modal.audioEl, h.audios[1], 'late events cannot clear new audio');
+  assert.equal(h.modal.speechBusy, true);
+  assert.equal(h.revokedUrls.filter(url => url === h.audios[0].url).length, 1);
+  h.modal.onClose(); await h.flush();
+});
+
+test('obsolete cloud fetch completion cannot unlock a resumed run', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush();
+  h.modal.pause(false);
+  h.advance(1000); h.modal.togglePlay();
+  h.requests[0].resolve(); await h.flush();
+  assert.equal(h.requests.length, 2, 'resume must have its own speech run');
+  assert.equal(h.modal.speechBusy, true, 'old finally must not unlock the new fetch');
+  assert.equal(h.audios.length, 0, 'stale response must not play');
+  h.requests[1].resolve(); await h.flush();
+  assert.equal(h.audios.length, 1);
+  h.modal.onClose(); await h.flush();
+});
+
+test('cloud speech preserves sentence order while the first fetch is delayed', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush();
+  h.tick(); h.tick(); h.tick(); h.tick(); h.tick();
+  assert.equal(h.modal.currentIndex, 4);
+  assert.equal(h.modal.isPlaying, false, 'the actual final tick completes RSVP');
+  assert.deepEqual(h.requests.map(request => request.text), ['One.']);
+  for (let i = 0; i < 5; i++) {
+    assert.equal(h.requests[i]?.text, ['One.', 'Two.', 'Three.', 'Four.', 'Five.'][i], 'every queued sentence must be requested in order');
+    h.requests[i].resolve(); await h.flush();
+    assert.equal(h.audios.length, i + 1);
+    h.advance(1000); h.audios[i].end(); await h.flush();
+  }
+  assert.deepEqual(h.requests.map(request => request.text), ['One.', 'Two.', 'Three.', 'Four.', 'Five.']);
+  assert.equal(h.modal.speechBusy, false);
+  h.modal.onClose();
+});
+
+test('cancelled audio worker cannot consume the resumed sentence queue', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush();
+  h.requests[0].resolve(); await h.flush();
+  h.modal.pause(false); h.advance(1000); h.modal.togglePlay();
+  h.tick(); // Queue Two before the cancelled worker gets its continuation.
+  await h.flush();
+  h.requests[1].resolve(); await h.flush();
+  h.advance(1000); h.audios[1].end(); await h.flush();
+  assert.equal(h.requests[2]?.text, 'Two.', 'stale worker must leave new queue untouched');
+  h.modal.onClose(); h.requests[2].resolve(); await h.flush();
+});
+
+test('seeking replaces obsolete cloud speech and queued sentences', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush();
+  h.tick(); h.tick(); // Two and Three are queued behind One.
+  h.modal.goToWord(3); h.advance(1000);
+  h.requests[0].resolve(); await h.flush();
+  assert.equal(h.audios.length, 0, 'pre-seek response must not play');
+  assert.deepEqual(h.requests.map(request => request.text), ['One.', 'Four.']);
+  h.requests[1].resolve(); await h.flush();
+  h.advance(1000); h.audios[0].end(); await h.flush();
+  assert.equal(h.requests.length, 2, 'pre-seek backlog must be discarded');
+  h.modal.onClose();
+});
+
+test('immediate pause after a playing seek cannot rewind into unread words', () => {
+  const h = readerHarness(Array.from({ length: 40 }, (_, i) => `word${i}`).join(' '), {
+    enableRampUp: false, rewindOnPause: true, rewindOnPauseWords: 3,
+  });
+  h.modal.togglePlay(); for (let i = 0; i < 6; i++) h.tick();
+  h.modal.goToWord(20); h.modal.pause(true);
+  assert.equal(h.modal.currentIndex, 20, 'seek starts a fresh playback segment');
+  assert.equal(h.modal.rewoundWordsDebt, 0, 'unread words must not become rewind debt');
+  h.modal.togglePlay(); h.tick();
+  assert.equal(h.modal.sessionWordsRead, 7, 'the first post-seek word must count');
+  h.tick(); h.tick(); h.modal.pause(true);
+  assert.equal(h.modal.currentIndex, 20, 'only words read after seeking may rewind');
+  assert.equal(h.modal.sessionWordsRead, 9);
+  h.modal.togglePlay(); h.tick(); h.tick(); h.tick();
+  assert.equal(h.modal.sessionWordsRead, 9, 'actual post-seek replays still use debt');
+  h.modal.onClose();
+});
+
+for (const action of ['pause', 'close', 'disable']) {
+  test(`${action} discards cloud backlog even when the fetch completes later`, async () => {
+    const h = cloudReader();
+    h.modal.togglePlay(); await h.flush(); h.tick(); h.tick();
+    if (action === 'pause') h.modal.pause(false);
+    else if (action === 'close') h.modal.onClose();
+    else h.modal.toggleTts();
+    h.requests[0].resolve(); await h.flush();
+    assert.equal(h.audios.length, 0);
+    assert.equal(h.requests.length, 1, 'obsolete queued sentences must never be fetched');
+    assert.equal(h.modal.speechBusy, false);
+    assert.equal(h.spoken.length, 0, 'stale work cannot trigger fallback');
+    if (action !== 'close') h.modal.onClose();
+  });
+}
+
+test('seeking stops playing cloud audio before replacing the sentence', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush(); h.requests[0].resolve(); await h.flush();
+  h.modal.goToWord(3); h.advance(1000); await h.flush();
+  assert.equal(h.audios[0].paused, true);
+  assert.deepEqual(h.requests.map(request => request.text), ['One.', 'Four.']);
+  h.modal.onClose(); h.requests[1].resolve(); await h.flush();
+  assert.equal(h.audios.length, 1);
+});
+
+test('natural completion lets active audio finish without charging tail time to reading', async () => {
+  const h = cloudReader('One two three four five.');
+  h.modal.togglePlay(); await h.flush(); h.requests[0].resolve(); await h.flush();
+  for (let i = 0; i < 5; i++) h.tick();
+  assert.equal(h.modal.completed, true);
+  assert.equal(h.modal.isPlaying, false);
+  assert.equal(h.timers.size, 0);
+  assert.equal(h.modal.playPauseBtn.icon, 'play', 'play now means replay, not a second audio stream');
+  assert.equal(h.audios[0].paused, false, 'natural completion cannot cancel active speech');
+  assert.equal(h.modal.audioEl, h.audios[0]);
+  const activeMs = h.modal.activeMs;
+  h.advance(120000); h.audios[0].end(); await h.flush();
+  assert.equal(h.modal.speechBusy, false);
+  assert.equal(h.modal.activeMs, activeMs);
+  h.modal.onClose();
+  assert.equal(h.settings.stats.sessionsCount, 1);
+  assert.equal(h.settings.stats.totalSecondsRead, Math.round(activeMs / 1000));
+});
+
+const tailActions = {
+  pause: h => h.modal.pause(false),
+  close: h => h.modal.onClose(),
+  disable: h => h.modal.toggleTts(),
+  seek: h => h.modal.goToWord(2),
+  restart: h => h.modal.restart(),
+  replay: h => h.modal.togglePlay(),
+};
+
+for (const [action, cancel] of Object.entries(tailActions)) {
+  for (const activeAudio of [false, true]) {
+    test(`${action} invalidates ${activeAudio ? 'active audio' : 'delayed fetch'} after natural completion`, async () => {
+      const h = cloudReader();
+      h.modal.togglePlay(); await h.flush();
+      if (activeAudio) { h.requests[0].resolve(); await h.flush(); }
+      for (let i = 0; i < 5; i++) h.tick();
+      const oldEnd = h.audios[0]?.onended, oldError = h.audios[0]?.onerror;
+      h.advance(1000); cancel(h); await h.flush();
+      if (!activeAudio) { h.requests[0].resolve(); await h.flush(); }
+      else {
+        assert.equal(h.audios[0].paused, true);
+        oldError?.(); oldEnd?.(); await h.flush();
+        assert.equal(h.revokedUrls.length, 1);
+      }
+      assert.equal(h.audios.length, activeAudio ? 1 : 0, 'obsolete tail cannot create audio');
+      assert.equal(h.spoken.length, 0, 'cancellation cannot become an audio error fallback');
+      if (action === 'replay') {
+        assert.equal(h.modal.currentIndex, 0);
+        assert.equal(h.modal.isPlaying, true);
+        assert.equal(h.modal.completed, false);
+        assert.equal(h.modal.playPauseBtn.icon, 'pause');
+        assert.deepEqual(h.requests.map(request => request.text), ['One.', 'One.']);
+        h.requests[1].resolve(); await h.flush();
+        assert.equal(h.modal.audioEl, h.audios.at(-1));
+      } else {
+        assert.equal(h.requests.length, 1, 'cancelled backlog must never resume');
+        assert.equal(h.modal.speechBusy, false);
+      }
+      if (action !== 'close') h.modal.onClose();
+      await h.flush();
+    });
+  }
+}
+
+for (const [action, cancel] of Object.entries(tailActions)) {
+  test(`${action} settles system fallback during the completed audio tail`, async () => {
+    const h = cloudReader();
+    let settled = false;
+    const speak = h.modal.speakWithUnrealSpeech.bind(h.modal);
+    let firstRun = true;
+    h.modal.speakWithUnrealSpeech = (...args) => {
+      const run = speak(...args);
+      if (!firstRun) return run;
+      firstRun = false;
+      return run.then(() => { settled = true; });
+    };
+    h.modal.togglePlay(); await h.flush();
+    for (let i = 0; i < 5; i++) h.tick();
+    h.requests[0].reject(new Error('offline')); await h.flush();
+    assert.equal(h.spoken[0]?.text, 'One.');
+    assert.equal(settled, false, 'the original worker waits for system speech completion');
+    const oldEnd = h.spoken[0].onend, oldError = h.spoken[0].onerror;
+    h.advance(1000); cancel(h); await h.flush();
+    assert.equal(settled, true, 'cancel must resolve the waiting fallback worker');
+    assert.equal(h.modal.finishSystemSpeech, null);
+    oldEnd?.(); oldError?.(); await h.flush();
+    assert.equal(h.spoken.length, 1, 'late fallback events cannot speak obsolete backlog');
+    if (action === 'replay') {
+      assert.equal(h.requests.length, 2, 'a fresh generation may try cloud speech again');
+      assert.equal(h.modal.speechBusy, true, 'old fallback completion cannot unlock replay');
+      h.requests[1].resolve(); await h.flush();
+      assert.equal(h.audios.length, 1);
+    } else assert.equal(h.modal.speechBusy, false);
+    if (action !== 'close') h.modal.onClose();
+    await h.flush();
+  });
+}
+
+test('multi-chunk fallback speaks only the failed chunk and remaining text', async () => {
+  const sentence = Array.from({ length: 240 }, (_, i) => `word${i}`).join(' ') + '.';
+  const h = cloudReader(sentence + ' Next.');
+  h.modal.togglePlay(); await h.flush();
+  for (let i = 0; i < h.modal.words.length; i++) h.tick();
+  const firstChunk = h.requests[0].text;
+  h.requests[0].resolve(); await h.flush();
+  h.advance(1000); h.audios[0].end(); await h.flush();
+  assert.equal(h.requests.length, 2);
+  h.requests[1].reject(new Error('second chunk failed')); await h.flush();
+  assert.equal(h.spoken[0]?.text, sentence.slice(firstChunk.length).trim(), 'never repeat successfully played chunks');
+  assert.equal(h.spoken.length, 1);
+  h.spoken[0].onend?.(); await h.flush();
+  assert.equal(h.spoken[1]?.text, 'Next.', 'later sentence follows the remaining chunks');
+  h.spoken[1].onend?.(); await h.flush();
+  assert.equal(h.modal.speechBusy, false);
+  assert.equal(h.requests.length, 2);
+  h.modal.onClose();
+});
+
+for (const failure of ['error event', 'play rejection']) {
+  test(`cloud audio ${failure} triggers ordered fallback and releases its URL once`, async () => {
+    const h = cloudReader(undefined, { rejectAudioPlay: failure === 'play rejection' });
+    h.modal.togglePlay(); await h.flush(); h.tick();
+    h.requests[0].resolve(); await h.flush();
+    const audio = h.audios[0];
+    const lateEnd = audio.onended, lateError = audio.onerror;
+    if (failure === 'error event') { audio.fail(); await h.flush(); }
+    assert.equal(h.spoken[0]?.text, 'One.', 'failed audio must enter system fallback');
+    assert.equal(h.requests.length, 1, 'no cloud voice may overlap fallback');
+    assert.equal(h.revokedUrls.filter(url => url === audio.url).length, 1);
+    lateEnd?.(); lateError?.(); await h.flush();
+    assert.equal(h.spoken.length, 1);
+    assert.equal(h.revokedUrls.length, 1);
+    h.modal.onClose(); await h.flush();
+  });
+}
+
+test('cloud fallback drains sentences in order without overlapping cloud audio', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush(); h.tick(); h.tick();
+  h.requests[0].reject(new Error('offline')); await h.flush();
+  assert.equal(h.spoken[0]?.text, 'One.');
+  assert.equal(h.requests.length, 1, 'next cloud fetch must not overlap system speech');
+  assert.equal(h.spoken.length, 1);
+  h.spoken[0].onend?.(); await h.flush();
+  assert.equal(h.spoken[1]?.text, 'Two.', 'the session stays on the ordered system queue');
+  h.spoken[1].onend?.(); await h.flush();
+  assert.equal(h.spoken[2]?.text, 'Three.');
+  h.spoken[2].onend?.(); await h.flush();
+  assert.equal(h.modal.speechBusy, false);
+  assert.equal(h.notices.length, 1);
+  h.modal.onClose();
+});
+
+test('a successful cloud response after close persists its billed characters', async () => {
+  const h = cloudReader();
+  h.modal.togglePlay(); await h.flush();
+  h.modal.onClose();
+  assert.equal(h.saves.at(-1).unrealSpeechCharsUsed, 0);
+  h.requests[0].resolve(); await h.flush();
+  assert.equal(h.settings.unrealSpeechCharsUsed, 'One.'.length);
+  assert.equal(h.saves.at(-1).unrealSpeechCharsUsed, 'One.'.length,
+    'late accounting must survive a plugin reload without another interaction');
+  assert.equal(h.audios.length, 0, 'persisting usage must not revive closed audio');
+  assert.equal(h.modal.speechQueue.length, 0);
+});
+
+test('usage-save failures report a persistence error without switching voices', async () => {
+  const h = readerHarness('One.', {
+    uiLanguage: 'en', enableTts: true, ttsProvider: 'unrealspeech',
+    unrealSpeechApiKey: 'fake-test-key', unrealSpeechCharsUsed: 0,
+  }, 'book.md', undefined, { cloud: true });
+  const save = h.modal.plugin.saveSettings;
+  h.modal.togglePlay(); await h.flush();
+  h.modal.plugin.saveSettings = async () => { throw new Error('disk unavailable'); };
+  h.requests[0].resolve(); await h.flush();
+  h.modal.plugin.saveSettings = save;
+  assert.equal(h.audios.length, 1, 'a disk error must not discard valid cloud audio');
+  assert.equal(h.spoken.length, 0, 'a disk error is not a synthesis failure');
+  assert.ok(h.notices.some(message => /usage counter.*save|save.*usage counter/i.test(message)));
+  h.modal.onClose(); await h.flush();
+});
+
+test('TTS toggle notices follow the selected reader language', () => {
+  const translations = {
+    en: ['🔊 Text-to-speech enabled', '🔇 Text-to-speech disabled'],
+    ru: ['🔊 Озвучка (TTS) включена', '🔇 Озвучка (TTS) выключена'],
+  };
+  for (const [uiLanguage, expected] of Object.entries(translations)) {
+    const h = readerHarness('Test.', { uiLanguage, enableTts: false });
+    h.modal.toggleTts(); h.modal.toggleTts();
+    assert.deepEqual(h.notices, expected);
+    h.modal.onClose();
+  }
+});
+
 test('cloud speech falls back to the system voice when the request fails', async () => {
   const h = readerHarness('Первое предложение для озвучки.', {
     enableTts: true,
@@ -314,7 +714,7 @@ test('cloud speech falls back to the system voice when the request fails', async
     unrealSpeechCharsUsed: 0,
   });
   h.modal.togglePlay();
-  await new Promise(resolve => setTimeout(resolve, 20));
+  await h.flush();
   assert.equal(h.spoken.length, 1, 'system voice speaks after the cloud error');
   assert.ok(h.notices.some(message => message.includes('Unreal Speech')), 'a notice explains the fallback');
   assert.equal(h.settings.unrealSpeechCharsUsed, 0, 'failed requests are not billed locally');

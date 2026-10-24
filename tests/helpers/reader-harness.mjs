@@ -37,7 +37,7 @@ class Element {
 }
 const compiled = buildSync({ entryPoints: [fileURLToPath(new URL('../../src/readerModal.ts', import.meta.url))], bundle: true, platform: 'node', format: 'cjs', external: ['obsidian'], write: false }).outputFiles[0].text;
 
-export function readerHarness(text = 'Один два три. Четыре пять шесть.', overrides = {}, noteKey = 'book.md', callbacks) {
+export function readerHarness(text = 'Один два три. Четыре пять шесть.', overrides = {}, noteKey = 'book.md', callbacks, runtime = {}) {
   let now = 1000, nextId = 0;
   const timers = new Map(), spoken = [], notices = [], saves = [], synced = [];
   const settings = { defaultWpm: 300, fontSize: 44, readerFont: 'theme', highlightOrp: true, orpWidth: 1, orpColor: '#e63946', showFixationGuide: true, pauseOnPunctuation: true, sentencePauseMultiplier: 2, commaPauseMultiplier: 1.4, stepWordCount: 10, themeMode: 'default', enableRampUp: true, rampUpWords: 15, rewindOnPause: true, showPauseStats: true, rewindOnPauseWords: 3, pauseOnParagraphs: true, paragraphPauseMultiplier: 2.5, pauseOnNumbersAndAcronyms: true, chunkSize: 1, bionicInChunks: true, rememberProgress: true, syncCursorOnClose: true, noteProgress: {}, redicleAlignment: 'spritz', spritzVariableTiming: true, enableTts: false, stats: { totalWordsRead: 0, totalSecondsRead: 0, maxWpm: 0, sessionsCount: 0 }, ...overrides };
@@ -48,12 +48,27 @@ export function readerHarness(text = 'Один два три. Четыре пя�
   }
   const exports = {};
   const window = { setTimeout: (fn, delay) => { const id = ++nextId; timers.set(id, { fn, delay }); return id; }, clearTimeout: id => timers.delete(id), speechSynthesis: { cancel() {}, speak(utterance) { spoken.push(utterance); } } };
-  const context = { exports, module: { exports }, require: name => { if (name !== 'obsidian') throw new Error(name); return { Modal, Notice: class { constructor(message) { notices.push(message); } }, setIcon(el, icon) { el.icon = icon; } }; }, window, SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } }, Date: class extends Date { static now() { return now; } }, console };
+  const requests = [], audios = [], revokedUrls = [];
+  if (runtime.cloud) {
+    window.fetch = (_url, options) => new Promise((resolve, reject) => {
+      requests.push({ text: JSON.parse(options.body).Text, reject,
+        resolve: () => resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) }) });
+    });
+  }
+  class Audio {
+    constructor(url) { this.url = url; this.paused = false; audios.push(this); }
+    play() { return runtime.rejectAudioPlay ? Promise.reject(new Error('play blocked')) : Promise.resolve(); }
+    pause() { this.paused = true; }
+    end() { this.onended?.(); }
+    fail() { this.onerror?.(); }
+  }
+  const context = { Audio, Blob, URL: { createObjectURL: () => `blob:test-${audios.length}`, revokeObjectURL: url => revokedUrls.push(url) }, exports, module: { exports }, require: name => { if (name !== 'obsidian') throw new Error(name); return { Modal, Notice: class { constructor(message) { notices.push(message); } }, setIcon(el, icon) { el.icon = icon; } }; }, window, SpeechSynthesisUtterance: class { constructor(text) { this.text = text; } }, Date: class extends Date { static now() { return now; } }, console };
   vm.runInNewContext(compiled, context);
   const plugin = { settings, async saveSettings() { saves.push(JSON.parse(JSON.stringify(settings))); } };
   const modal = new context.module.exports.SpeedReaderModal({}, plugin, text, 'Test book', noteKey, callbacks ?? ((...args) => synced.push(args)));
   modal.onOpen();
-  return { modal, settings, timers, spoken, notices, saves, synced,
+  return { modal, settings, timers, spoken, notices, saves, synced, requests, audios, revokedUrls,
+    async flush() { for (let i = 0; i < 40; i++) await Promise.resolve(); },
     tick() { const first = timers.entries().next().value; if (!first) throw new Error('No scheduled timer'); const [id, timer] = first; timers.delete(id); now += timer.delay; timer.fn(); return timer.delay; },
     disableSpeechApi() { delete window.speechSynthesis; },
     advance(ms) { now += ms; },

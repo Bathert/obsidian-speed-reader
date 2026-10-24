@@ -45,10 +45,14 @@ export class SpeedReaderModal extends Modal {
   /** Token that invalidates in-flight cloud speech when playback stops. */
   private speechToken: number = 0;
   private audioEl: HTMLAudioElement | null = null;
+  private finishAudio: (() => void) | null = null;
   private speechObjectUrl: string | null = null;
   private speechFallbackNoticeShown: boolean = false;
+  private useSystemFallback: boolean = false;
+  private finishSystemSpeech: (() => void) | null = null;
   /** True while a cloud sentence is being fetched or played. */
   private speechBusy: boolean = false;
+  private speechQueue: string[] = [];
   private currentWpm: number;
   private settings: SpeedReaderSettings;
   private titleText: string;
@@ -532,7 +536,7 @@ export class SpeedReaderModal extends Modal {
     if (btn) {
       setIcon(btn, this.settings.enableTts ? "volume-2" : "volume-x");
     }
-    new Notice(this.settings.enableTts ? "🔊 Озвучка (TTS) включена" : "🔇 Озвучка (TTS) выключена");
+    new Notice(this.settings.enableTts ? this.t.ttsEnabledNotice : this.t.ttsDisabledNotice);
     if (!this.settings.enableTts) {
       this.stopTts();
     } else if (this.isPlaying) {
@@ -570,53 +574,81 @@ export class SpeedReaderModal extends Modal {
 
   /** Cloud speech: fetch the sentence in <=1000-char chunks and play them. */
   private async speakWithUnrealSpeech(text: string): Promise<void> {
-    // One sentence at a time: a new sentence must not cut off the audio that is
-    // still being fetched or played.
+    // Keep every segment while RSVP moves ahead of the cloud voice.
+    this.speechQueue.push(text);
     if (this.speechBusy) return;
     const token = this.speechToken;
     this.speechBusy = true;
-    const chunks = splitForSpeech(text);
     try {
-      for (const chunk of chunks) {
-        if (token !== this.speechToken || !this.isPlaying) return;
-        try {
-          const audioBytes = await synthesizeSpeech(chunk, {
-            apiKey: this.settings.unrealSpeechApiKey,
-            voiceId: this.settings.unrealSpeechVoiceId,
-            wpm: this.currentWpm,
-          });
-          // The request is billed even if playback stopped meanwhile.
-          this.settings.unrealSpeechCharsUsed += chunk.length;
-          if (token !== this.speechToken || !this.isPlaying) return;
-          await this.playAudioBytes(audioBytes, token);
-        } catch (error) {
-          if (token !== this.speechToken) return;
-          this.reportSpeechError(error, text);
-          return;
+      while (token === this.speechToken && (this.isPlaying || this.completed) && this.speechQueue.length > 0) {
+        const sentence = this.speechQueue.shift()!;
+        if (this.useSystemFallback) {
+          await this.speakSystemFallback(sentence, token);
+          continue;
+        }
+        const chunks = splitForSpeech(sentence);
+        for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+          const chunk = chunks[chunkIndex];
+          if (token !== this.speechToken || (!this.isPlaying && !this.completed)) return;
+          try {
+            const audioBytes = await synthesizeSpeech(chunk, {
+              apiKey: this.settings.unrealSpeechApiKey,
+              voiceId: this.settings.unrealSpeechVoiceId,
+              wpm: this.currentWpm,
+            });
+            // The request is billed even if playback stopped meanwhile.
+            this.settings.unrealSpeechCharsUsed += chunk.length;
+            try {
+              await this.plugin.saveSettings();
+            } catch {
+              new Notice(this.t.ttsUsageSaveFailedNotice);
+            }
+            if (token !== this.speechToken || (!this.isPlaying && !this.completed)) return;
+            await this.playAudioBytes(audioBytes, token);
+          } catch (error) {
+            if (token !== this.speechToken) return;
+            this.useSystemFallback = true;
+            this.reportSpeechError(error);
+            await this.speakSystemFallback(chunks.slice(chunkIndex).join(" "), token);
+            break;
+          }
         }
       }
     } finally {
-      this.speechBusy = false;
+      if (token === this.speechToken) this.speechBusy = false;
     }
   }
 
-  /** Plays MP3 bytes and resolves when the chunk ends. */
+  /** Ends/cancellation resolve; media failures reject into ordered fallback. */
   private playAudioBytes(bytes: ArrayBuffer, token: number): Promise<void> {
     if (typeof Audio === "undefined") return Promise.resolve();
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const url = URL.createObjectURL(new Blob([bytes], { type: "audio/mpeg" }));
       this.speechObjectUrl = url;
       const audio = new Audio(url);
       this.audioEl = audio;
-      const finish = () => {
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        audio.onended = null;
+        audio.onerror = null;
+        if (error) audio.pause();
+        if (this.finishAudio === finish) this.finishAudio = null;
         URL.revokeObjectURL(url);
         if (this.speechObjectUrl === url) this.speechObjectUrl = null;
         if (this.audioEl === audio) this.audioEl = null;
-        resolve();
+        if (error) reject(error);
+        else resolve();
       };
-      audio.onended = finish;
-      audio.onerror = finish;
-      audio.play().catch(finish);
+      this.finishAudio = finish;
+      audio.onended = () => finish();
+      audio.onerror = () => finish(new Error("Audio playback failed"));
+      try {
+        void audio.play().catch(() => finish(new Error("Audio playback rejected")));
+      } catch {
+        finish(new Error("Audio playback failed"));
+      }
       if (token !== this.speechToken) {
         audio.pause();
         finish();
@@ -625,6 +657,11 @@ export class SpeedReaderModal extends Modal {
   }
 
   private cancelAudio() {
+    if (this.finishAudio) {
+      this.audioEl?.pause();
+      this.finishAudio();
+      return;
+    }
     if (this.audioEl) {
       this.audioEl.pause();
       this.audioEl = null;
@@ -636,7 +673,7 @@ export class SpeedReaderModal extends Modal {
   }
 
   /** Reports quota/key problems once and falls back to the system voice. */
-  private reportSpeechError(error: unknown, text: string) {
+  private reportSpeechError(error: unknown) {
     const speechError = error instanceof UnrealSpeechError ? error : null;
     const message = speechError ? speechError.message : "Unreal Speech недоступен.";
     if (!this.speechFallbackNoticeShown) {
@@ -646,15 +683,33 @@ export class SpeedReaderModal extends Modal {
         9000
       );
     }
-    if (!this.canUseSystemSpeech()) return;
-    try {
+  }
+
+  /** Resolve on completion or cancellation so only one voice owns the queue. */
+  private speakSystemFallback(text: string, token: number): Promise<void> {
+    if (!this.canUseSystemSpeech() || token !== this.speechToken) return Promise.resolve();
+    return new Promise((resolve) => {
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = detectSpeechLang(text);
       utterance.rate = Math.max(0.7, Math.min(2.5, this.currentWpm / 190));
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      // Nothing else we can do.
-    }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        utterance.onend = null;
+        utterance.onerror = null;
+        if (this.finishSystemSpeech === finish) this.finishSystemSpeech = null;
+        resolve();
+      };
+      this.finishSystemSpeech = finish;
+      utterance.onend = finish;
+      utterance.onerror = finish;
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        finish();
+      }
+    });
   }
 
   private canUseSystemSpeech(): boolean {
@@ -663,6 +718,10 @@ export class SpeedReaderModal extends Modal {
 
   private stopTts() {
     this.speechToken += 1;
+    this.speechQueue = [];
+    this.speechBusy = false;
+    this.useSystemFallback = false;
+    this.finishSystemSpeech?.();
     this.cancelAudio();
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       try {
@@ -687,6 +746,8 @@ export class SpeedReaderModal extends Modal {
   }
 
   private play() {
+    // Replay/resume owns a new generation, including any completed audio tail.
+    this.stopTts();
     this.isPlaying = true;
     this.hasInteracted = true;
     this.wordsSinceResume = 0;
@@ -707,11 +768,11 @@ export class SpeedReaderModal extends Modal {
    * Pauses reader.
    * Feature 1: Rewind on Pause (auto-rewind 3-5 words so context is never lost).
    */
-  private pause(triggeredByUser: boolean = true) {
+  private pause(triggeredByUser: boolean = true, drainSpeech: boolean = false) {
     this.isPlaying = false;
     this.accumulateActiveTime();
     this.syncZenClass();
-    this.stopTts();
+    if (!drainSpeech) this.stopTts();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
       this.timer = null;
@@ -774,10 +835,15 @@ export class SpeedReaderModal extends Modal {
   }
 
   private goToWord(index: number) {
+    this.stopTts();
     this.completed = false;
     this.finalChunkStart = null;
     this.hasInteracted = true;
-    // A manual jump invalidates the rewind compensation from the old position.
+    // A manual jump starts a new segment; old words cannot justify a rewind
+    // or compensate for words at the new position. Keep the target speed, but
+    // require a full new training interval before the next acceleration.
+    this.wordsSinceResume = 0;
+    this.wordsSinceAcceleration = 0;
     this.rewoundWordsDebt = 0;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -841,19 +907,17 @@ export class SpeedReaderModal extends Modal {
 
     this.timer = window.setTimeout(() => {
       const consumed = Math.min(stepSize, this.words.length - this.currentIndex);
-      if (this.rewoundWordsDebt > 0) {
-        const absorbed = Math.min(this.rewoundWordsDebt, consumed);
-        this.rewoundWordsDebt -= absorbed;
-        this.sessionWordsRead += consumed - absorbed;
-      } else {
-        this.sessionWordsRead += consumed;
-      }
+      // Automatic context replays count neither toward analytics nor training.
+      const absorbed = Math.min(this.rewoundWordsDebt, consumed);
+      this.rewoundWordsDebt -= absorbed;
+      const newlyRead = consumed - absorbed;
+      this.sessionWordsRead += newlyRead;
       this.sessionMaxWpm = Math.max(this.sessionMaxWpm, effectiveWpm);
       this.wordsSinceResume += consumed;
 
       // Trainer mode: raise the target speed every N read words, up to the cap.
       if (this.settings.autoAccelerate && this.settings.autoAccelerateIntervalWords > 0) {
-        this.wordsSinceAcceleration += consumed;
+        this.wordsSinceAcceleration += newlyRead;
         if (this.wordsSinceAcceleration >= this.settings.autoAccelerateIntervalWords) {
           this.wordsSinceAcceleration %= this.settings.autoAccelerateIntervalWords;
           const cap = Math.max(this.currentWpm, this.settings.maxWpmLimit || 600);
@@ -867,7 +931,8 @@ export class SpeedReaderModal extends Modal {
         // Keep the whole final chunk on screen and move progress to 100%.
         if (stepSize > 1) this.updateWordDisplay();
         else this.updateProgress();
-        this.pause(false);
+        // Stop the visual clock, not speech already queued by this reading.
+        this.pause(false, true);
         return;
       }
       this.currentIndex += consumed;
