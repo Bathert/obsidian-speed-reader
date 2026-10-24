@@ -3,7 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-import { isSentenceEnd } from "./speedEngine.ts";
+import { isSentenceEndWord } from "./speedEngine.ts";
 
 export interface ParsedWord {
   raw: string;
@@ -13,6 +13,13 @@ export interface ParsedWord {
   delayMultiplier: number;
   isParagraphEnd?: boolean;
   charOffset?: number;
+}
+
+export interface HeadingItem {
+  level: number;
+  title: string;
+  charOffset: number;
+  wordIndex: number;
 }
 
 export interface ParseOptions {
@@ -73,8 +80,15 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
     replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
   }
 
+  // Remove Obsidian and HTML comments
+  replace(/%%[\s\S]*?%%/g, "");
+  replace(/<!--[\s\S]*?-->/g, "");
+
   // Remove code blocks
   replace(/```[\s\S]*?```/g, "");
+
+  // Remove display math
+  replace(/\$\$[\s\S]*?\$\$/g, "");
 
   // Remove inline code
   replace(/`([^`]+)`/g, "$1");
@@ -89,8 +103,20 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
   // Replace Markdown links [text](url) -> text
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
 
+  // Shorten bare URLs to their domain
+  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
+
+  // Remove footnote references
+  replace(/\[\^[^\]]+\]:?/g, "");
+
   // Remove HTML tags, but not prose like "a < b and b > c".
   replace(/<\/?[a-zA-Z][^>]*>/g, "");
+
+  // Remove callout type markers (> [!note]) but keep the title
+  replace(/^\s*>\s*\[![^\]]+\][+-]?\s*/gm, "");
+
+  // Unwrap ==highlights==
+  replace(/==([^=]+)==/g, "$1");
 
   // Remove header hashes (#, ##, etc.) but keep title words
   replace(/^#{1,6}\s+/gm, "");
@@ -103,6 +129,9 @@ function cleanMarkdownWithOffsets(text: string): { text: string; offsets: number
 
   // Remove blockquotes (>)
   replace(/^\s*>\s*/gm, "");
+
+  // Remove markdown table separator lines |---|---|
+  replace(/^[^\S\n]*\|[-:|^\S\n]+\|[^\S\n]*$/gm, "");
 
   // Remove task list checkboxes like - [ ] or - [x]
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
@@ -252,7 +281,7 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = options.paragraphPauseMultiplier ?? 2.5;
-        } else if (isSentenceEnd(token)) {
+        } else if (isSentenceEndWord(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
@@ -292,3 +321,35 @@ export function parseWords(text: string, options: ParseOptions): ParsedWord[] {
   return result;
 }
 
+/**
+ * Finds the index of the first word at or after a given source offset.
+ */
+export function findWordIndexAtOffset(words: ParsedWord[], targetOffset: number): number {
+  if (words.length === 0 || targetOffset <= 0) return 0;
+  for (let index = 0; index < words.length; index++) {
+    const offset = words[index].charOffset;
+    if (typeof offset === "number" && offset >= targetOffset) return index;
+  }
+  return words.length - 1;
+}
+
+/**
+ * Extracts Markdown headings and maps each one to its starting word index.
+ */
+export function extractHeadings(text: string, words: ParsedWord[]): HeadingItem[] {
+  if (!text || words.length === 0) return [];
+  const headings: HeadingItem[] = [];
+  const headingPattern = /^(#{1,6})\s+(.+?)\s*$/gm;
+  let match: RegExpExecArray | null;
+  while ((match = headingPattern.exec(text)) !== null) {
+    const title = cleanMarkdown(match[2]).trim();
+    if (!title) continue;
+    headings.push({
+      level: match[1].length,
+      title,
+      charOffset: match.index,
+      wordIndex: findWordIndexAtOffset(words, match.index),
+    });
+  }
+  return headings;
+}

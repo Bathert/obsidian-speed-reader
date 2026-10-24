@@ -6,11 +6,10 @@ const plain = value => JSON.parse(JSON.stringify(value));
 
 test('onload registers commands, ribbon, settings and menu once without writes', async () => {
   const h = harness(); await h.plugin.onload();
-  assert.deepEqual(h.calls.commands.map(c => c.id), ['speed-read-current', 'speed-read-selection', 'speed-read-whole-note', 'speed-reader-stats', 'speed-reader-self-check']);
+  assert.deepEqual(h.calls.commands.map(c => c.id), ['speed-read-current', 'speed-read-selection', 'speed-read-whole-note', 'speed-read-from-cursor', 'speed-reader-stats', 'speed-reader-self-check']);
   assert.equal(h.calls.ribbons.length, 1);
   assert.equal(h.calls.tabs.length, 1);
-  assert.equal(h.calls.events.length, 1);
-  assert.equal(h.calls.events[0].name, 'editor-menu');
+  assert.deepEqual(h.calls.events.map(e => e.name), ['editor-menu', 'active-leaf-change']);
   assert.equal(h.calls.saves.length, 0);
 });
 

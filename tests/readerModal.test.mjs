@@ -199,3 +199,44 @@ test('final chunk stays on screen when playback completes', () => {
   assert.equal(h.modal.chunkEl.textContent, 'четырепятьшесть');
   assert.match(h.modal.progressLabel.textContent, /^6 \/ 6/);
 });
+
+test('table of contents lists headings and jumps to the chosen one', () => {
+  const h = readerHarness('# Глава первая\n\nТекст главы.\n\n## Раздел второй\n\nЕщё текст.', { enableRampUp: false });
+  const options = h.modal.tocSelectEl.children.filter(child => child.tagName === 'option');
+  assert.equal(options.length, 3, 'placeholder + two headings');
+  const target = options[2];
+  h.modal.tocSelectEl.value = target.value;
+  h.modal.tocSelectEl.onchange();
+  assert.equal(String(h.modal.currentIndex), target.value);
+});
+
+test('zen mode toggles from the keyboard and dims controls only while playing', () => {
+  const h = readerHarness('Один два три четыре', { enableRampUp: false, zenMode: false });
+  assert.equal(h.key('f'), false);
+  assert.equal(h.settings.zenMode, true);
+  assert.equal(h.modal.modalEl.hasClass('sr-zen-active'), false, 'paused: not dimmed');
+  h.modal.togglePlay();
+  assert.equal(h.modal.modalEl.hasClass('sr-zen-active'), true);
+  h.modal.pause(true);
+  assert.equal(h.modal.modalEl.hasClass('sr-zen-active'), false);
+});
+
+test('highlight key wraps the current sentence through the callback', () => {
+  const calls = [];
+  const h = readerHarness('Первое предложение. Второе предложение здесь.', { enableRampUp: false }, 'book.md', {
+    onHighlightSentence: (start, end, text) => { calls.push({ start: start.raw, end: end.raw, text }); return true; },
+  });
+  h.modal.goToWord(3);
+  assert.equal(h.key('h'), false);
+  assert.deepEqual(calls, [{ start: 'Второе', end: 'здесь.', text: 'Второе предложение здесь.' }]);
+  assert.ok(h.notices.some(message => message.includes('выделено')));
+});
+
+test('trainer mode raises the target speed every configured interval up to the cap', () => {
+  const h = readerHarness('один два три четыре пять шесть семь восемь девять десять', {
+    enableRampUp: false, autoAccelerate: true, autoAccelerateStep: 10, autoAccelerateIntervalWords: 3, maxWpmLimit: 315,
+  });
+  h.modal.togglePlay();
+  for (let i = 0; i < 6; i++) h.tick();
+  assert.equal(h.modal.currentWpm, 315);
+});

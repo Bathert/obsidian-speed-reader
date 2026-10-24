@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+import type { ResolvedLanguage } from "./i18n";
 /**
  * Pure calculation functions for the speed reader engine.
  */
@@ -27,13 +28,16 @@ export function calculateProgressPercent(currentIndex: number, totalWords: numbe
   return Math.max(0, Math.min(100, Math.round(((currentIndex + 1) / totalWords) * 100)));
 }
 
-export function formatTimeRemaining(remainingWords: number, wpm: number): string {
-  if (remainingWords <= 0) return "0 с";
+export function formatTimeRemaining(remainingWords: number, wpm: number, lang: ResolvedLanguage = "ru"): string {
+  if (remainingWords <= 0) return lang === "en" ? "0s left" : "0 с";
   const safeWpm = Math.max(60, wpm);
   const totalSeconds = Math.round((remainingWords / safeWpm) * 60);
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
 
+  if (lang === "en") {
+    return mins > 0 ? `~${mins}m ${secs}s left` : `~${secs}s left`;
+  }
   if (mins > 0) {
     return `~${mins} мин ${secs} с`;
   }
@@ -155,7 +159,16 @@ export function calculateSessionSummary(
  * Короткая мотивирующая строка под итогами паузы.
  * Сравнивает фактическую скорость с обычным чтением (200 WPM).
  */
-export function buildMotivationLine(avgWpm: number, targetWpm: number): string {
+export function buildMotivationLine(avgWpm: number, targetWpm: number, lang: ResolvedLanguage = "ru"): string {
+  if (lang === "en") {
+    if (avgWpm <= 0) return "Press Space to start reading.";
+    if (avgWpm < 200) return "Slower than average reading so far. Try +50 WPM; your eyes adapt quickly.";
+    if (avgWpm < 300) return "Already faster than normal reading. Keep the rhythm.";
+    if (avgWpm < 450) return "Great pace: well above average reading speed.";
+    if (avgWpm < 600) return "Strong pace. Keep comprehension high; step -50 if needed.";
+    if (avgWpm > targetWpm + 50) return "Flying above target. Slow down by 50 if meaning starts to blur.";
+    return "High-speed zone. Check that comprehension holds steady.";
+  }
   if (avgWpm <= 0) return "Поехали: пробел — и понеслась.";
   if (avgWpm < 200) return "Пока медленнее обычного чтения. Попробуй +50 WPM, мозг быстро привыкает.";
   if (avgWpm < 300) return "Уже быстрее обычного чтения. Держи ритм.";
@@ -168,8 +181,14 @@ export function buildMotivationLine(avgWpm: number, targetWpm: number): string {
 /**
  * Человеческая длительность: до минуты — секунды, дальше минуты с одним знаком.
  */
-export function formatDuration(seconds: number): string {
+export function formatDuration(seconds: number, lang: ResolvedLanguage = "ru"): string {
   const safe = Math.max(0, Math.round(seconds));
+  if (lang === "en") {
+    if (safe < 60) return `${safe}s`;
+    const minutes = safe / 60;
+    const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1);
+    return `${text}m`;
+  }
   if (safe < 60) return `${safe} с`;
   const minutes = safe / 60;
   const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
@@ -182,4 +201,21 @@ export function formatDuration(seconds: number): string {
  */
 export function isSentenceEnd(raw: string): boolean {
   return /[.!?…]+["'»”’)\]}）]*$/.test(raw);
+}
+
+/** Alias used by the parser and the reader. */
+export const isSentenceEndWord = isSentenceEnd;
+
+/** Start and end word indices of the sentence containing currentIndex. */
+export function findSentenceBounds(
+  words: { raw: string }[],
+  currentIndex: number
+): { start: number; end: number } {
+  if (words.length === 0) return { start: 0, end: 0 };
+  const safeIdx = clampIndex(currentIndex, words.length);
+  let start = safeIdx;
+  while (start > 0 && !isSentenceEnd(words[start - 1].raw)) start--;
+  let end = safeIdx;
+  while (end < words.length - 1 && !isSentenceEnd(words[end].raw)) end++;
+  return { start, end };
 }

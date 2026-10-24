@@ -35,8 +35,14 @@ export function harness(data = null) {
     update() { this.updates = (this.updates ?? 0) + 1; }
   }
   class SpeedReaderModal {
-    constructor(app, plugin, text, title, noteKey = '', onSyncCursor) {
-      Object.assign(this, { app, plugin, text, title, noteKey, onSyncCursor });
+    constructor(app, plugin, text, title, noteKey = '', callbacksOrSync) {
+      const callbacks = typeof callbacksOrSync === 'function' ? { onSyncCursor: callbacksOrSync } : (callbacksOrSync || {});
+      Object.assign(this, {
+        app, plugin, text, title, noteKey,
+        onSyncCursor: callbacks.onSyncCursor,
+        onHighlightSentence: callbacks.onHighlightSentence,
+        initialIndex: callbacks.initialIndex,
+      });
     }
     open() { calls.modals.push(this); }
     close() { calls.closed = (calls.closed ?? 0) + 1; }

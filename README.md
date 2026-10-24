@@ -35,6 +35,17 @@ Russian version: [README.ru.md](README.ru.md)
 - On close, the editor cursor moves to the word being read.
 - **Show speed reading statistics** reports words read, time spent, top speed, and estimated time saved relative to 200 WPM. The saving is an estimate, not a measure or a guarantee of comprehension.
 
+### Navigation, focus, and the trainer
+
+- **Table of contents**: the reader header lists every heading of the note and follows the current chapter while you read, so a long book can be jumped to any section.
+- **Speed read from cursor**: a command starts the whole note from the word at the editor cursor.
+- **Highlight on the fly** (`H`): wraps the current sentence in `==highlight==` directly in the open note, or copies the sentence if no editor is available.
+- **Interactive context**: on pause the surrounding 15 words are shown and every one of them is clickable for an instant jump.
+- **Zen mode** (`F`): dims the header, progress bar, and controls during playback, leaving only the word in focus. Moving the pointer restores them.
+- **Trainer mode**: raises the target WPM every N read words up to a configured ceiling.
+- **Status bar estimate**: shows the reading progress and remaining time of the active note (`📖 42% · ~3 мин`); clicking it opens the reader.
+- **Touch gestures**: on the reading frame, tap the left or right third to step, tap the center to play or pause, and swipe up or down by 25 WPM.
+
 ### Reading fonts
 
 - **Golos Text** has a large x-height, open apertures, and full Cyrillic and Latin coverage. It is the recommended choice for Russian text.
@@ -51,6 +62,8 @@ Russian version: [README.ru.md](README.ru.md)
 | `Up` / `Down` | Increase or decrease speed by 25 WPM |
 | `Left` / `Right` | Jump by the configured number of words |
 | `[` / `]` | Move to the previous or next sentence |
+| `H` or the Russian `Р` | Highlight the current sentence in the note |
+| `F` or the Russian `А` | Toggle zen mode |
 | `R` or the Russian `К` | Restart from the first word |
 | `Esc` | Close the reader (saves progress and cursor) |
 
@@ -70,6 +83,7 @@ Open a Markdown note, optionally select a passage, and click the book icon in th
 - **Speed read current selection or active note** - reads the selection if there is one, the whole note otherwise;
 - **Speed read selected text** - reads only the selection;
 - **Speed read entire active note** - reads the whole note;
+- **Speed read from Cursor** - starts the whole note at the editor cursor;
 - **Show speed reading statistics** - shows your counters;
 - **Run self-check** - opens and closes a short probe window, checks parsing, offsets, timing, navigation, progress bounds, and the reader window itself, then reports how many steps passed.
 

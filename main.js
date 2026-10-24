@@ -49,12 +49,15 @@ function calculateProgressPercent(currentIndex, totalWords) {
   if (totalWords <= 0) return 0;
   return Math.max(0, Math.min(100, Math.round((currentIndex + 1) / totalWords * 100)));
 }
-function formatTimeRemaining(remainingWords, wpm) {
-  if (remainingWords <= 0) return "0 \u0441";
+function formatTimeRemaining(remainingWords, wpm, lang = "ru") {
+  if (remainingWords <= 0) return lang === "en" ? "0s left" : "0 \u0441";
   const safeWpm = Math.max(60, wpm);
   const totalSeconds = Math.round(remainingWords / safeWpm * 60);
   const mins = Math.floor(totalSeconds / 60);
   const secs = totalSeconds % 60;
+  if (lang === "en") {
+    return mins > 0 ? `~${mins}m ${secs}s left` : `~${secs}s left`;
+  }
   if (mins > 0) {
     return `~${mins} \u043C\u0438\u043D ${secs} \u0441`;
   }
@@ -116,7 +119,16 @@ function calculateSessionSummary(wordsRead, activeSeconds, currentWpm, remaining
     remainingMinutes: Math.round(remainingMinutes * 10) / 10
   };
 }
-function buildMotivationLine(avgWpm, targetWpm) {
+function buildMotivationLine(avgWpm, targetWpm, lang = "ru") {
+  if (lang === "en") {
+    if (avgWpm <= 0) return "Press Space to start reading.";
+    if (avgWpm < 200) return "Slower than average reading so far. Try +50 WPM; your eyes adapt quickly.";
+    if (avgWpm < 300) return "Already faster than normal reading. Keep the rhythm.";
+    if (avgWpm < 450) return "Great pace: well above average reading speed.";
+    if (avgWpm < 600) return "Strong pace. Keep comprehension high; step -50 if needed.";
+    if (avgWpm > targetWpm + 50) return "Flying above target. Slow down by 50 if meaning starts to blur.";
+    return "High-speed zone. Check that comprehension holds steady.";
+  }
   if (avgWpm <= 0) return "\u041F\u043E\u0435\u0445\u0430\u043B\u0438: \u043F\u0440\u043E\u0431\u0435\u043B \u2014 \u0438 \u043F\u043E\u043D\u0435\u0441\u043B\u0430\u0441\u044C.";
   if (avgWpm < 200) return "\u041F\u043E\u043A\u0430 \u043C\u0435\u0434\u043B\u0435\u043D\u043D\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E \u0447\u0442\u0435\u043D\u0438\u044F. \u041F\u043E\u043F\u0440\u043E\u0431\u0443\u0439 +50 WPM, \u043C\u043E\u0437\u0433 \u0431\u044B\u0441\u0442\u0440\u043E \u043F\u0440\u0438\u0432\u044B\u043A\u0430\u0435\u0442.";
   if (avgWpm < 300) return "\u0423\u0436\u0435 \u0431\u044B\u0441\u0442\u0440\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E \u0447\u0442\u0435\u043D\u0438\u044F. \u0414\u0435\u0440\u0436\u0438 \u0440\u0438\u0442\u043C.";
@@ -125,8 +137,14 @@ function buildMotivationLine(avgWpm, targetWpm) {
   if (avgWpm > targetWpm + 50) return "\u041B\u0435\u0442\u0438\u0448\u044C \u0432\u044B\u0448\u0435 \u0446\u0435\u043B\u0438. \u0415\u0441\u043B\u0438 \u043A\u0430\u0440\u0442\u0438\u043D\u043A\u0430 \u0432 \u0433\u043E\u043B\u043E\u0432\u0435 \u0440\u0430\u0441\u0441\u044B\u043F\u0430\u0435\u0442\u0441\u044F \u2014 \u043F\u0440\u0438\u0442\u043E\u0440\u043C\u043E\u0437\u0438 \u043D\u0430 50.";
   return "\u041D\u0430 \u0442\u0430\u043A\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 \u043E\u0431\u044B\u0447\u043D\u043E \u043F\u0435\u0440\u0435\u0447\u0438\u0442\u044B\u0432\u0430\u044E\u0442. \u041F\u0440\u043E\u0432\u0435\u0440\u044C, \u0447\u0442\u043E \u0441\u043C\u044B\u0441\u043B \u0434\u0435\u0440\u0436\u0438\u0442\u0441\u044F.";
 }
-function formatDuration(seconds) {
+function formatDuration(seconds, lang = "ru") {
   const safe = Math.max(0, Math.round(seconds));
+  if (lang === "en") {
+    if (safe < 60) return `${safe}s`;
+    const minutes2 = safe / 60;
+    const text2 = minutes2 >= 10 ? String(Math.round(minutes2)) : minutes2.toFixed(1);
+    return `${text2}m`;
+  }
   if (safe < 60) return `${safe} \u0441`;
   const minutes = safe / 60;
   const text = minutes >= 10 ? String(Math.round(minutes)) : minutes.toFixed(1).replace(".", ",");
@@ -135,9 +153,20 @@ function formatDuration(seconds) {
 function isSentenceEnd(raw) {
   return /[.!?…]+["'»”’)\]}）]*$/.test(raw);
 }
+var isSentenceEndWord = isSentenceEnd;
+function findSentenceBounds(words, currentIndex) {
+  if (words.length === 0) return { start: 0, end: 0 };
+  const safeIdx = clampIndex(currentIndex, words.length);
+  let start = safeIdx;
+  while (start > 0 && !isSentenceEnd(words[start - 1].raw)) start--;
+  let end = safeIdx;
+  while (end < words.length - 1 && !isSentenceEnd(words[end].raw)) end++;
+  return { start, end };
+}
 
 // src/settings.ts
 var DEFAULT_SETTINGS = {
+  uiLanguage: "auto",
   defaultWpm: 350,
   fontSize: 44,
   readerFont: "theme",
@@ -159,12 +188,19 @@ var DEFAULT_SETTINGS = {
   pauseOnParagraphs: true,
   paragraphPauseMultiplier: 2.5,
   pauseOnNumbersAndAcronyms: true,
+  // Trainer / Zen
+  zenMode: false,
+  autoAccelerate: false,
+  autoAccelerateStep: 10,
+  autoAccelerateIntervalWords: 200,
+  maxWpmLimit: 600,
   // Top Feature 2
   chunkSize: 1,
   bionicInChunks: true,
   // Top Feature 3
   rememberProgress: true,
   syncCursorOnClose: true,
+  showStatusBar: true,
   noteProgress: {},
   // Spritz Redicle & Timing
   redicleAlignment: "spritz",
@@ -212,6 +248,8 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
       value = value === "center" ? "center" : "spritz";
     } else if (key === "themeMode") {
       value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "uiLanguage") {
+      value = value === "ru" || value === "en" ? value : "auto";
     } else if (key === "stepWordCount") {
       const step = parseInt(String(value), 10);
       value = Number.isFinite(step) ? Math.max(1, Math.min(50, step)) : DEFAULT_SETTINGS.stepWordCount;
@@ -272,6 +310,21 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         type: "group",
         heading: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0438 \u0448\u0440\u0438\u0444\u0442",
         items: [
+          {
+            name: "\u042F\u0437\u044B\u043A \u0438\u043D\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0430 \u0440\u0438\u0434\u0435\u0440\u0430",
+            desc: "\u0410\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438 \u043F\u043E \u044F\u0437\u044B\u043A\u0443 Obsidian, \u0440\u0443\u0441\u0441\u043A\u0438\u0439 \u0438\u043B\u0438 \u0430\u043D\u0433\u043B\u0438\u0439\u0441\u043A\u0438\u0439",
+            aliases: ["uiLanguage", "language", "locale"],
+            control: {
+              type: "dropdown",
+              key: "uiLanguage",
+              defaultValue: String(DEFAULT_SETTINGS.uiLanguage),
+              options: {
+                auto: "\u0410\u0432\u0442\u043E (\u043F\u043E \u044F\u0437\u044B\u043A\u0443 Obsidian)",
+                ru: "\u0420\u0443\u0441\u0441\u043A\u0438\u0439",
+                en: "English"
+              }
+            }
+          },
           {
             name: "\u0421\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u043F\u043E \u0443\u043C\u043E\u043B\u0447\u0430\u043D\u0438\u044E (WPM)",
             desc: "\u0421\u043B\u043E\u0432 \u0432 \u043C\u0438\u043D\u0443\u0442\u0443 \u043F\u0440\u0438 \u043E\u0442\u043A\u0440\u044B\u0442\u0438\u0438 (\u043C\u0435\u043D\u044F\u0435\u0442\u0441\u044F \u043D\u0430 \u043B\u0435\u0442\u0443 \u0441\u0442\u0440\u0435\u043B\u043A\u0430\u043C\u0438 \u2191\u2193)",
@@ -359,6 +412,12 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         heading: "\u0423\u043C\u043D\u044B\u0439 \u0442\u0435\u043C\u043F (Smart Pacing & Rhythm)",
         items: [
           {
+            name: "\u0414\u0437\u0435\u043D-\u0440\u0435\u0436\u0438\u043C \u0432\u043E \u0432\u0440\u0435\u043C\u044F \u0447\u0442\u0435\u043D\u0438\u044F",
+            desc: "\u041F\u0440\u0438\u0433\u043B\u0443\u0448\u0430\u0442\u044C \u0448\u0430\u043F\u043A\u0443, \u043F\u043E\u043B\u0437\u0443\u043D\u043E\u043A \u0438 \u043A\u043D\u043E\u043F\u043A\u0438 \u0432\u043E \u0432\u0440\u0435\u043C\u044F \u0432\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u0435\u0434\u0435\u043D\u0438\u044F (\u043A\u043B\u0430\u0432\u0438\u0448\u0430 F)",
+            aliases: ["zenMode", "distraction free"],
+            control: { type: "toggle", key: "zenMode", defaultValue: DEFAULT_SETTINGS.zenMode }
+          },
+          {
             name: "\u041F\u043B\u0430\u0432\u043D\u044B\u0439 \u0440\u0430\u0437\u0433\u043E\u043D (Speed Ramp-up)",
             desc: "\u041D\u0430\u0447\u0438\u043D\u0430\u0442\u044C \u0447\u0442\u0435\u043D\u0438\u0435 \u0441 65% \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 \u0438 \u043F\u043B\u0430\u0432\u043D\u043E \u0440\u0430\u0437\u0433\u043E\u043D\u044F\u0442\u044C\u0441\u044F \u0437\u0430 \u043F\u0435\u0440\u0432\u044B\u0435 \u0441\u043B\u043E\u0432\u0430, \u0447\u0442\u043E\u0431\u044B \u043C\u043E\u0437\u0433 \u0430\u0434\u0430\u043F\u0442\u0438\u0440\u043E\u0432\u0430\u043B\u0441\u044F",
             aliases: ["enableRampUp"],
@@ -369,6 +428,30 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
             desc: "\u0417\u0430 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0435\u0440\u0432\u044B\u0445 \u0441\u043B\u043E\u0432 \u0434\u043E\u0441\u0442\u0438\u0433\u0430\u0442\u044C \u0446\u0435\u043B\u0435\u0432\u043E\u0439 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u0438 WPM",
             aliases: ["rampUpWords"],
             control: { type: "slider", key: "rampUpWords", min: 5, max: 40, step: 5, defaultValue: DEFAULT_SETTINGS.rampUpWords }
+          },
+          {
+            name: "\u0420\u0435\u0436\u0438\u043C \xAB\u0422\u0440\u0435\u043D\u0435\u0440\xBB (\u0430\u0432\u0442\u043E-\u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u0435)",
+            desc: "\u041F\u043E\u0441\u0442\u0435\u043F\u0435\u043D\u043D\u043E \u043F\u043E\u0432\u044B\u0448\u0430\u0442\u044C \u0446\u0435\u043B\u0435\u0432\u0443\u044E \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C WPM \u043F\u043E \u043C\u0435\u0440\u0435 \u0447\u0442\u0435\u043D\u0438\u044F \u0434\u043B\u0438\u043D\u043D\u043E\u0433\u043E \u0442\u0435\u043A\u0441\u0442\u0430",
+            aliases: ["autoAccelerate", "trainer"],
+            control: { type: "toggle", key: "autoAccelerate", defaultValue: DEFAULT_SETTINGS.autoAccelerate }
+          },
+          {
+            name: "\u0428\u0430\u0433 \u0430\u0432\u0442\u043E-\u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F (+WPM)",
+            desc: "\u041D\u0430 \u0441\u043A\u043E\u043B\u044C\u043A\u043E WPM \u043F\u043E\u0432\u044B\u0448\u0430\u0442\u044C \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C \u0437\u0430 \u043E\u0434\u0438\u043D \u0448\u0430\u0433",
+            aliases: ["autoAccelerateStep"],
+            control: { type: "slider", key: "autoAccelerateStep", min: 5, max: 50, step: 5, defaultValue: DEFAULT_SETTINGS.autoAccelerateStep }
+          },
+          {
+            name: "\u0418\u043D\u0442\u0435\u0440\u0432\u0430\u043B \u0430\u0432\u0442\u043E-\u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F (\u0441\u043B\u043E\u0432)",
+            desc: "\u0427\u0435\u0440\u0435\u0437 \u0441\u043A\u043E\u043B\u044C\u043A\u043E \u043F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043D\u044B\u0445 \u0441\u043B\u043E\u0432 \u043F\u043E\u0432\u044B\u0448\u0430\u0442\u044C \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C",
+            aliases: ["autoAccelerateIntervalWords"],
+            control: { type: "slider", key: "autoAccelerateIntervalWords", min: 50, max: 500, step: 50, defaultValue: DEFAULT_SETTINGS.autoAccelerateIntervalWords }
+          },
+          {
+            name: "\u041F\u043E\u0442\u043E\u043B\u043E\u043A \u0430\u0432\u0442\u043E-\u0443\u0441\u043A\u043E\u0440\u0435\u043D\u0438\u044F (WPM)",
+            desc: "\u041C\u0430\u043A\u0441\u0438\u043C\u0430\u043B\u044C\u043D\u0430\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C, \u0434\u043E \u043A\u043E\u0442\u043E\u0440\u043E\u0439 \u0440\u0430\u0437\u0433\u043E\u043D\u044F\u0435\u0442 \u0440\u0435\u0436\u0438\u043C \xAB\u0422\u0440\u0435\u043D\u0435\u0440\xBB",
+            aliases: ["maxWpmLimit"],
+            control: { type: "slider", key: "maxWpmLimit", min: 200, max: 1200, step: 25, defaultValue: DEFAULT_SETTINGS.maxWpmLimit }
           },
           {
             name: "\u0418\u0442\u043E\u0433\u0438 \u0438 \u043C\u043E\u0442\u0438\u0432\u0430\u0446\u0438\u044F \u043D\u0430 \u043F\u0430\u0443\u0437\u0435",
@@ -508,6 +591,12 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
         heading: "\u0410\u0443\u0434\u0438\u043E-\u0441\u043E\u043F\u0440\u043E\u0432\u043E\u0436\u0434\u0435\u043D\u0438\u0435 (Text-to-Speech / TTS)",
         items: [
           {
+            name: "\u041F\u043E\u043A\u0430\u0437\u044B\u0432\u0430\u0442\u044C \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441 \u0432 \u0441\u0442\u0430\u0442\u0443\u0441-\u0431\u0430\u0440\u0435",
+            desc: "\u041F\u0440\u043E\u0446\u0435\u043D\u0442 \u043F\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u044F \u0438 \u043E\u0446\u0435\u043D\u043A\u0430 \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0434\u043B\u044F \u0430\u043A\u0442\u0438\u0432\u043D\u043E\u0439 \u0437\u0430\u043C\u0435\u0442\u043A\u0438 \u0432 \u043D\u0438\u0436\u043D\u0435\u0439 \u043F\u0430\u043D\u0435\u043B\u0438 Obsidian",
+            aliases: ["showStatusBar", "status bar"],
+            control: { type: "toggle", key: "showStatusBar", defaultValue: DEFAULT_SETTINGS.showStatusBar }
+          },
+          {
             name: "\u0412\u043A\u043B\u044E\u0447\u0438\u0442\u044C \u043E\u0437\u0432\u0443\u0447\u043A\u0443 (TTS)",
             desc: "\u0412\u043E\u0441\u043F\u0440\u043E\u0438\u0437\u0432\u043E\u0434\u0438\u0442\u044C \u0447\u0438\u0442\u0430\u0435\u043C\u044B\u0439 \u0442\u0435\u043A\u0441\u0442 \u0433\u043E\u043B\u043E\u0441\u043E\u043C \u0432 \u0440\u0435\u0430\u043B\u044C\u043D\u043E\u043C \u0432\u0440\u0435\u043C\u0435\u043D\u0438 \u0447\u0435\u0440\u0435\u0437 \u0441\u0438\u0441\u0442\u0435\u043C\u043D\u044B\u0439 \u0441\u0438\u043D\u0442\u0435\u0437\u0430\u0442\u043E\u0440 \u0440\u0435\u0447\u0438",
             aliases: ["enableTts"],
@@ -523,6 +612,9 @@ var SpeedReaderSettingTab = class extends import_obsidian.PluginSettingTab {
 var import_obsidian2 = require("obsidian");
 
 // src/textParser.ts
+function cleanMarkdown(text) {
+  return cleanMarkdownWithOffsets(text).text;
+}
 function cleanMarkdownWithOffsets(text) {
   let cleaned = text;
   let offsets = Array.from({ length: text.length }, (_, index) => index);
@@ -553,19 +645,27 @@ function cleanMarkdownWithOffsets(text) {
   if (frontmatter && /^[ \t]*[A-Za-z_][\w-]*[ \t]*:/m.test(frontmatter[1])) {
     replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, "");
   }
+  replace(/%%[\s\S]*?%%/g, "");
+  replace(/<!--[\s\S]*?-->/g, "");
   replace(/```[\s\S]*?```/g, "");
+  replace(/\$\$[\s\S]*?\$\$/g, "");
   replace(/`([^`]+)`/g, "$1");
   replace(/!\[\[.*?\]\]/g, "");
   replace(/!\[.*?\]\(.*?\)/g, "");
   replace(/\[\[(?:[^|\]]*\|)?([^\]]+)\]\]/g, "$1");
   replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  replace(/https?:\/\/([^\s/)#?]+)(?:[^\s).,;:!?]*)/g, "$1");
+  replace(/\[\^[^\]]+\]:?/g, "");
   replace(/<\/?[a-zA-Z][^>]*>/g, "");
+  replace(/^\s*>\s*\[![^\]]+\][+-]?\s*/gm, "");
+  replace(/==([^=]+)==/g, "$1");
   replace(/^#{1,6}\s+/gm, "");
   replace(/(\*\*|__)(.*?)\1/g, "$2");
   replace(/\*([^*\n]+)\*/g, "$1");
   replace(/(?<![\p{L}\p{N}])_([^_\n]+)_(?![\p{L}\p{N}])/gu, "$1");
   replace(/~~(.*?)~~/g, "$1");
   replace(/^\s*>\s*/gm, "");
+  replace(/^[^\S\n]*\|[-:|^\S\n]+\|[^\S\n]*$/gm, "");
   replace(/^\s*[-*+]\s+\[[ xX]\]\s+/gm, "");
   replace(/^\s*[-*+]\s+/gm, "");
   replace(/^\s*\d+\.\s+/gm, "");
@@ -661,7 +761,7 @@ function parseWords(text, options) {
       if (options.pauseOnPunctuation) {
         if (isParagraphEnd && options.pauseOnParagraphs) {
           punctMultiplier = (_b = options.paragraphPauseMultiplier) != null ? _b : 2.5;
-        } else if (isSentenceEnd(token)) {
+        } else if (isSentenceEndWord(token)) {
           punctMultiplier = options.sentencePauseMultiplier;
         } else if (/[,;:—–-]+["'»”’）)\]}]*$/.test(token)) {
           punctMultiplier = options.commaPauseMultiplier;
@@ -691,14 +791,138 @@ function parseWords(text, options) {
   }
   return result;
 }
+function findWordIndexAtOffset(words, targetOffset) {
+  if (words.length === 0 || targetOffset <= 0) return 0;
+  for (let index = 0; index < words.length; index++) {
+    const offset = words[index].charOffset;
+    if (typeof offset === "number" && offset >= targetOffset) return index;
+  }
+  return words.length - 1;
+}
+function extractHeadings(text, words) {
+  if (!text || words.length === 0) return [];
+  const headings = [];
+  const headingPattern = /^(#{1,6})\s+(.+?)\s*$/gm;
+  let match;
+  while ((match = headingPattern.exec(text)) !== null) {
+    const title = cleanMarkdown(match[2]).trim();
+    if (!title) continue;
+    headings.push({
+      level: match[1].length,
+      title,
+      charOffset: match.index,
+      wordIndex: findWordIndexAtOffset(words, match.index)
+    });
+  }
+  return headings;
+}
+
+// src/i18n.ts
+function resolveLanguage(setting = "auto") {
+  var _a;
+  if (setting === "ru" || setting === "en") return setting;
+  const candidates = [];
+  if (typeof document !== "undefined" && ((_a = document.documentElement) == null ? void 0 : _a.lang)) {
+    candidates.push(document.documentElement.lang);
+  }
+  if (typeof navigator !== "undefined" && navigator.language) {
+    candidates.push(navigator.language);
+  }
+  for (const candidate of candidates) {
+    const value = candidate.toLowerCase();
+    if (value.startsWith("ru")) return "ru";
+    if (value) return "en";
+  }
+  return "ru";
+}
+function detectSpeechLang(text) {
+  return /[а-яёіїєґ]/i.test(text) ? "ru-RU" : "en-US";
+}
+var I18N = {
+  ru: {
+    emptySelectionOrNote: "No readable words found in selection or note.",
+    close: "Close",
+    resumeProgress: (word, total, pct) => `\u{1F4CD} \u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u0439 \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441: \u0441\u043B\u043E\u0432\u043E ${word} \u0438\u0437 ${total} (${pct}%)`,
+    resumeBtn: "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C",
+    startOverBtn: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430",
+    wordsCount: (count) => ` (${count} \u0441\u043B\u043E\u0432)`,
+    shortcutsHint: "\u041F\u0440\u043E\u0431\u0435\u043B: \u0421\u0442\u0430\u0440\u0442/\u041F\u0430\u0443\u0437\u0430 | \u2191\u2193: WPM | \u2190\u2192: \u0421\u043B\u043E\u0432 | [ ]: \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 | H: \u0412\u044B\u0434\u0435\u043B\u0438\u0442\u044C | F: \u0414\u0437\u0435\u043D | R: \u0421\u043D\u0430\u0447\u0430\u043B\u0430",
+    restartTitle: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430 (r)",
+    prevSentenceTitle: "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0435\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 ([)",
+    stepBackTitle: (count) => `\u041D\u0430\u0437\u0430\u0434 \u043D\u0430 ${count} \u0441\u043B\u043E\u0432 (\u2190)`,
+    playPauseTitle: "\u0421\u0442\u0430\u0440\u0442 / \u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)",
+    pauseTitle: "\u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)",
+    playTitle: "\u0421\u0442\u0430\u0440\u0442 (\u041F\u0440\u043E\u0431\u0435\u043B)",
+    stepForwardTitle: (count) => `\u0412\u043F\u0435\u0440\u0435\u0434 \u043D\u0430 ${count} \u0441\u043B\u043E\u0432 (\u2192)`,
+    nextSentenceTitle: "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 (])",
+    ttsTitle: "\u041E\u0437\u0432\u0443\u0447\u043A\u0430 / TTS (m)",
+    highlightTitle: "\u0412\u044B\u0434\u0435\u043B\u0438\u0442\u044C \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0435 (h)",
+    zenTitle: "\u0414\u0437\u0435\u043D-\u0440\u0435\u0436\u0438\u043C (f)",
+    tocPlaceholder: "\u041F\u0435\u0440\u0435\u0439\u0442\u0438 \u043A \u0440\u0430\u0437\u0434\u0435\u043B\u0443\u2026",
+    ttsEnabledNotice: "\u{1F50A} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u043A\u043B\u044E\u0447\u0435\u043D\u0430",
+    ttsDisabledNotice: "\u{1F507} \u041E\u0437\u0432\u0443\u0447\u043A\u0430 (TTS) \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u0430",
+    highlightedNotice: "\u2728 \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0432\u044B\u0434\u0435\u043B\u0435\u043D\u043E \u0432 \u0437\u0430\u043C\u0435\u0442\u043A\u0435",
+    highlightCopiedNotice: "\u{1F4CB} \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 \u0441\u043A\u043E\u043F\u0438\u0440\u043E\u0432\u0430\u043D\u043E \u0432 \u0431\u0443\u0444\u0435\u0440 \u043E\u0431\u043C\u0435\u043D\u0430",
+    pauseTitleText: "\u23F8 \u041F\u0430\u0443\u0437\u0430",
+    pauseSubText: (words, duration) => ` \xB7 ${words} \u0441\u043B\u043E\u0432 \u0437\u0430 ${duration}`,
+    metricAvgWpm: "\u0441\u0440\u0435\u0434\u043D\u044F\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C",
+    metricSpeedup: "\u0431\u044B\u0441\u0442\u0440\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E",
+    metricSaved: "\u0441\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E",
+    metricRemaining: "\u0434\u043E \u043A\u043E\u043D\u0446\u0430",
+    pauseProgress: (pct, current, total) => `\u041F\u0440\u043E\u0433\u0440\u0435\u0441\u0441 ${pct}% \xB7 ${current} / ${total} \u0441\u043B\u043E\u0432`,
+    statsNotice: (words, mins, sessions, maxWpm, savedMin) => `\u{1F4CA} \u0421\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u0435:
+\u2022 \u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E \u0441\u043B\u043E\u0432: ${words}
+\u2022 \u0412\u0440\u0435\u043C\u044F: ${mins} \u043C\u0438\u043D (${sessions} \u0441\u0435\u0441\u0441\u0438\u0439)
+\u2022 \u041C\u0430\u043A\u0441 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C: ${maxWpm} WPM
+\u2022 \u0421\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E: ~${savedMin} \u043C\u0438\u043D`
+  },
+  en: {
+    emptySelectionOrNote: "No readable words found in selection or note.",
+    close: "Close",
+    resumeProgress: (word, total, pct) => `\u{1F4CD} Saved progress: word ${word} of ${total} (${pct}%)`,
+    resumeBtn: "Resume",
+    startOverBtn: "Start over",
+    wordsCount: (count) => ` (${count} words)`,
+    shortcutsHint: "Space: Play/Pause | \u2191\u2193: WPM | \u2190\u2192: Step | [ ]: Sentence | H: Highlight | F: Zen | R: Restart",
+    restartTitle: "Restart (r)",
+    prevSentenceTitle: "Previous sentence ([)",
+    stepBackTitle: (count) => `Back ${count} words (\u2190)`,
+    playPauseTitle: "Play / Pause (Space)",
+    pauseTitle: "Pause (Space)",
+    playTitle: "Play (Space)",
+    stepForwardTitle: (count) => `Forward ${count} words (\u2192)`,
+    nextSentenceTitle: "Next sentence (])",
+    ttsTitle: "Text-to-speech (m)",
+    highlightTitle: "Highlight sentence in note (h)",
+    zenTitle: "Zen mode (f)",
+    tocPlaceholder: "Jump to heading\u2026",
+    ttsEnabledNotice: "\u{1F50A} Text-to-speech enabled",
+    ttsDisabledNotice: "\u{1F507} Text-to-speech disabled",
+    highlightedNotice: "\u2728 Sentence highlighted in note",
+    highlightCopiedNotice: "\u{1F4CB} Sentence copied to clipboard",
+    pauseTitleText: "\u23F8 Paused",
+    pauseSubText: (words, duration) => ` \xB7 ${words} words in ${duration}`,
+    metricAvgWpm: "average speed",
+    metricSpeedup: "faster than 200 WPM",
+    metricSaved: "time saved",
+    metricRemaining: "remaining",
+    pauseProgress: (pct, current, total) => `Progress ${pct}% \xB7 ${current} / ${total} words`,
+    statsNotice: (words, mins, sessions, maxWpm, savedMin) => `\u{1F4CA} Speed reading:
+\u2022 Words read: ${words}
+\u2022 Time: ${mins} min (${sessions} sessions)
+\u2022 Top speed: ${maxWpm} WPM
+\u2022 Time saved: ~${savedMin} min`
+  }
+};
 
 // src/readerModal.ts
 var PROGRESS_SAVE_EVERY_WORDS = 25;
 var SpeedReaderModal = class extends import_obsidian2.Modal {
-  constructor(app, plugin, text, title, noteKey = "", onSyncCursor) {
+  constructor(app, plugin, text, title, noteKey = "", callbacksOrSync) {
     var _a;
     super(app);
     this.words = [];
+    this.headings = [];
     this.currentIndex = 0;
     this.isPlaying = false;
     this.completed = false;
@@ -715,17 +939,31 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     // Слова, прочитанные с момента последнего старта/возобновления:
     // именно по ним считается разгон, чтобы после паузы он начинался заново.
     this.wordsSinceResume = 0;
+    this.wordsSinceAcceleration = 0;
+    /** Words rewound on pause that must not be counted twice when replayed. */
+    this.rewoundWordsDebt = 0;
+    /** First word of the chunk that was on screen when the text ended. */
+    this.finalChunkStart = null;
     this.isRampingUp = false;
     this.lastPersistedIndex = 0;
     // Активное время чтения без пауз — база для честной средней скорости.
     this.activeSince = null;
     this.activeMs = 0;
+    this.touchStartX = 0;
+    this.touchStartY = 0;
+    this.tocSelectEl = null;
+    this.zenBtn = null;
     this.plugin = plugin;
     this.settings = plugin.settings;
     this.currentWpm = this.settings.defaultWpm;
     this.titleText = title;
     this.noteKey = noteKey;
-    this.onSyncCursor = onSyncCursor;
+    if (typeof callbacksOrSync === "function") {
+      this.onSyncCursor = callbacksOrSync;
+    } else if (callbacksOrSync) {
+      this.onSyncCursor = callbacksOrSync.onSyncCursor;
+      this.onHighlightSentence = callbacksOrSync.onHighlightSentence;
+    }
     this.words = parseWords(text, {
       pauseOnPunctuation: this.settings.pauseOnPunctuation,
       sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
@@ -736,6 +974,16 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       spritzVariableTiming: this.settings.spritzVariableTiming,
       orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
     });
+    this.headings = extractHeadings(text, this.words);
+    if (typeof callbacksOrSync === "object" && typeof (callbacksOrSync == null ? void 0 : callbacksOrSync.initialIndex) === "number") {
+      this.currentIndex = Math.max(0, Math.min(this.words.length - 1, Math.trunc(callbacksOrSync.initialIndex)));
+    }
+  }
+  get lang() {
+    return resolveLanguage(this.settings.uiLanguage);
+  }
+  get t() {
+    return I18N[this.lang];
   }
   onOpen() {
     var _a;
@@ -750,21 +998,21 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     }
     (_a = this.modalEl.querySelector(".modal-header")) == null ? void 0 : _a.addClass("sr-header-hidden");
     if (this.words.length === 0) {
-      contentEl.createEl("h3", { text: "No readable words found in selection or note." });
-      const closeBtn = contentEl.createEl("button", { text: "Close", cls: "mod-cta" });
+      contentEl.createEl("h3", { text: this.t.emptySelectionOrNote });
+      const closeBtn = contentEl.createEl("button", { text: this.t.close, cls: "mod-cta" });
       closeBtn.onclick = () => this.close();
       return;
     }
     const saved = this.noteKey && this.settings.rememberProgress ? this.settings.noteProgress[this.noteKey] : null;
-    if (saved && saved.index > 0 && saved.index < this.words.length - 1) {
+    if (this.currentIndex === 0 && saved && saved.index > 0 && saved.index < this.words.length - 1) {
       this.resumeBannerEl = contentEl.createDiv({ cls: "sr-resume-banner" });
       const pct = Math.round((saved.index + 1) / this.words.length * 100);
       this.resumeBannerEl.createSpan({
-        text: `\u{1F4CD} \u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0438\u0439 \u043F\u0440\u043E\u0433\u0440\u0435\u0441\u0441: \u0441\u043B\u043E\u0432\u043E ${saved.index + 1} \u0438\u0437 ${this.words.length} (${pct}%)`
+        text: this.t.resumeProgress(saved.index + 1, this.words.length, pct)
       });
       const resumeBtnGroup = this.resumeBannerEl.createDiv({ cls: "sr-resume-btn-group" });
       const resumeBtn = resumeBtnGroup.createEl("button", {
-        text: "\u041F\u0440\u043E\u0434\u043E\u043B\u0436\u0438\u0442\u044C",
+        text: this.t.resumeBtn,
         cls: "mod-cta sr-small-btn"
       });
       resumeBtn.onclick = () => {
@@ -772,7 +1020,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         this.resumeBannerEl.remove();
       };
       const startOverBtn = resumeBtnGroup.createEl("button", {
-        text: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430",
+        text: this.t.startOverBtn,
         cls: "sr-small-btn"
       });
       startOverBtn.onclick = () => {
@@ -781,16 +1029,33 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       };
     }
     const header = contentEl.createDiv({ cls: "sr-header" });
-    const titleEl = header.createDiv({ cls: "sr-title" });
+    const titleRow = header.createDiv({ cls: "sr-title-row" });
+    const titleEl = titleRow.createDiv({ cls: "sr-title" });
     titleEl.createSpan({ text: this.titleText, cls: "sr-title-name" });
-    titleEl.createSpan({ text: ` (${this.words.length} \u0441\u043B\u043E\u0432)`, cls: "sr-title-meta" });
+    titleEl.createSpan({ text: this.t.wordsCount(this.words.length), cls: "sr-title-meta" });
+    if (this.headings.length > 0) {
+      this.tocSelectEl = titleRow.createEl("select", { cls: "sr-toc-select dropdown" });
+      this.tocSelectEl.createEl("option", { text: this.t.tocPlaceholder, value: "" });
+      for (const heading of this.headings) {
+        const prefix = heading.level > 1 ? `${"\u2014".repeat(heading.level - 1)} ` : "";
+        this.tocSelectEl.createEl("option", {
+          text: `${prefix}${heading.title}`,
+          value: String(heading.wordIndex)
+        });
+      }
+      this.tocSelectEl.onchange = () => {
+        if (!this.tocSelectEl || this.tocSelectEl.value === "") return;
+        this.goToWord(parseInt(this.tocSelectEl.value, 10));
+      };
+    }
     const hints = header.createDiv({ cls: "sr-shortcuts-hint" });
-    hints.setText("\u041F\u0440\u043E\u0431\u0435\u043B: \u0421\u0442\u0430\u0440\u0442/\u041F\u0430\u0443\u0437\u0430 | \u2191\u2193: WPM | \u2190\u2192: \u0421\u043B\u043E\u0432 | [ ]: \u041F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 | R: \u0421\u043D\u0430\u0447\u0430\u043B\u0430");
+    hints.setText(this.t.shortcutsHint);
     const frame = contentEl.createDiv({ cls: "sr-frame" });
     if (this.settings.redicleAlignment === "spritz") {
       frame.addClass("sr-redicle-spritz");
     }
     frame.setCssProps({ "--sr-font-size": `${this.settings.fontSize}px` });
+    this.registerFrameGestures(frame);
     if (this.settings.showFixationGuide && this.settings.chunkSize === 1) {
       const topGuide = frame.createDiv({ cls: "sr-guide sr-guide-top" });
       topGuide.createDiv({ cls: "sr-notch sr-notch-down" });
@@ -828,45 +1093,57 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.timeLeftLabel = progressMeta.createSpan({ cls: "sr-time-left-label" });
     const controls = contentEl.createDiv({ cls: "sr-controls" });
     const navGroup = controls.createDiv({ cls: "sr-btn-group" });
-    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: "\u0421\u043D\u0430\u0447\u0430\u043B\u0430 (r)" } });
+    const restartBtn = navGroup.createEl("button", { cls: "sr-icon-btn", attr: { title: this.t.restartTitle } });
     (0, import_obsidian2.setIcon)(restartBtn, "rotate-ccw");
     restartBtn.onclick = () => this.restart();
     const prevSentBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: "\u041F\u0440\u0435\u0434\u044B\u0434\u0443\u0449\u0435\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 ([)" }
+      attr: { title: this.t.prevSentenceTitle }
     });
     (0, import_obsidian2.setIcon)(prevSentBtn, "chevrons-left");
     prevSentBtn.onclick = () => this.jumpSentence(-1);
     const backBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: `\u041D\u0430\u0437\u0430\u0434 \u043D\u0430 ${this.settings.stepWordCount} \u0441\u043B\u043E\u0432 (\u2190)` }
+      attr: { title: this.t.stepBackTitle(this.settings.stepWordCount) }
     });
     (0, import_obsidian2.setIcon)(backBtn, "skip-back");
     backBtn.onclick = () => this.step(-this.settings.stepWordCount);
     this.playPauseBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn sr-play-btn mod-cta",
-      attr: { title: "\u0421\u0442\u0430\u0440\u0442 / \u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)" }
+      attr: { title: this.t.playPauseTitle }
     });
     (0, import_obsidian2.setIcon)(this.playPauseBtn, "play");
     this.playPauseBtn.onclick = () => this.togglePlay();
     const fwdBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: `\u0412\u043F\u0435\u0440\u0435\u0434 \u043D\u0430 ${this.settings.stepWordCount} \u0441\u043B\u043E\u0432 (\u2192)` }
+      attr: { title: this.t.stepForwardTitle(this.settings.stepWordCount) }
     });
     (0, import_obsidian2.setIcon)(fwdBtn, "skip-forward");
     fwdBtn.onclick = () => this.step(this.settings.stepWordCount);
     const nextSentBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: "\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0435\u0435 \u043F\u0440\u0435\u0434\u043B\u043E\u0436\u0435\u043D\u0438\u0435 (])" }
+      attr: { title: this.t.nextSentenceTitle }
     });
     (0, import_obsidian2.setIcon)(nextSentBtn, "chevrons-right");
     nextSentBtn.onclick = () => this.jumpSentence(1);
     const ttsBtn = navGroup.createEl("button", {
       cls: "sr-icon-btn",
-      attr: { title: "\u041E\u0437\u0432\u0443\u0447\u043A\u0430 / tts (m)" }
+      attr: { title: this.t.ttsTitle }
     });
     (0, import_obsidian2.setIcon)(ttsBtn, this.settings.enableTts ? "volume-2" : "volume-x");
     ttsBtn.onclick = () => this.toggleTts(ttsBtn);
+    const highlightBtn = navGroup.createEl("button", {
+      cls: "sr-icon-btn",
+      attr: { title: this.t.highlightTitle }
+    });
+    (0, import_obsidian2.setIcon)(highlightBtn, "highlighter");
+    highlightBtn.onclick = () => this.highlightCurrentSentence();
+    this.zenBtn = navGroup.createEl("button", {
+      cls: `sr-icon-btn${this.settings.zenMode ? " sr-btn-active" : ""}`,
+      attr: { title: this.t.zenTitle }
+    });
+    (0, import_obsidian2.setIcon)(this.zenBtn, "maximize-2");
+    this.zenBtn.onclick = () => this.toggleZenMode();
     const speedGroup = controls.createDiv({ cls: "sr-speed-group" });
     const decSpeedLarge = speedGroup.createEl("button", { text: "-50", cls: "sr-small-btn" });
     decSpeedLarge.onclick = () => this.adjustWpm(-50);
@@ -909,6 +1186,18 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         case "\u042C":
           this.toggleTts(ttsBtn);
           return false;
+        case "h":
+        case "H":
+        case "\u0440":
+        case "\u0420":
+          this.highlightCurrentSentence();
+          return false;
+        case "f":
+        case "F":
+        case "\u0430":
+        case "\u0410":
+          this.toggleZenMode();
+          return false;
         case "r":
         case "R":
         case "\u043A":
@@ -919,6 +1208,66 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
           return true;
       }
     });
+  }
+  /** Touch and swipe gestures on the reading frame (mobile). */
+  registerFrameGestures(frame) {
+    frame.ontouchstart = (event) => {
+      var _a;
+      const touch = (_a = event.changedTouches) == null ? void 0 : _a[0];
+      if (!touch) return;
+      this.touchStartX = touch.clientX;
+      this.touchStartY = touch.clientY;
+    };
+    frame.ontouchend = (event) => {
+      var _a;
+      const touch = (_a = event.changedTouches) == null ? void 0 : _a[0];
+      if (!touch) return;
+      const dx = touch.clientX - this.touchStartX;
+      const dy = touch.clientY - this.touchStartY;
+      if (Math.abs(dy) > 35 && Math.abs(dy) > Math.abs(dx)) {
+        this.adjustWpm(dy < 0 ? 25 : -25);
+        return;
+      }
+      if (Math.abs(dx) < 20 && Math.abs(dy) < 20) {
+        const rect = typeof frame.getBoundingClientRect === "function" ? frame.getBoundingClientRect() : null;
+        if (rect && rect.width > 0) {
+          const relX = (touch.clientX - rect.left) / rect.width;
+          if (relX < 0.3) this.step(-this.settings.stepWordCount);
+          else if (relX > 0.7) this.step(this.settings.stepWordCount);
+          else this.togglePlay();
+        } else {
+          this.togglePlay();
+        }
+      }
+    };
+  }
+  toggleZenMode() {
+    this.settings.zenMode = !this.settings.zenMode;
+    if (this.zenBtn) this.zenBtn.toggleClass("sr-btn-active", this.settings.zenMode);
+    this.syncZenClass();
+    void this.plugin.saveSettings();
+  }
+  syncZenClass() {
+    this.modalEl.toggleClass("sr-zen-active", Boolean(this.isPlaying && this.settings.zenMode));
+  }
+  highlightCurrentSentence() {
+    var _a;
+    if (this.words.length === 0) return;
+    const { start, end } = findSentenceBounds(this.words, this.currentIndex);
+    const startWord = this.words[start];
+    const endWord = this.words[end];
+    const sentenceText = this.words.slice(start, end + 1).map((word) => word.raw).join(" ");
+    if (this.onHighlightSentence && startWord && endWord) {
+      const applied = this.onHighlightSentence(startWord, endWord, sentenceText);
+      if (applied) {
+        new import_obsidian2.Notice(this.t.highlightedNotice);
+        return;
+      }
+    }
+    if (typeof navigator !== "undefined" && ((_a = navigator.clipboard) == null ? void 0 : _a.writeText)) {
+      void navigator.clipboard.writeText(sentenceText);
+    }
+    new import_obsidian2.Notice(this.t.highlightCopiedNotice);
   }
   onClose() {
     this.pause(false);
@@ -961,12 +1310,13 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     try {
       window.speechSynthesis.cancel();
       let end = Math.min(this.words.length - 1, startIndex + (this.settings.chunkSize || 1) - 1);
-      while (end < this.words.length - 1 && !isSentenceEnd(this.words[end].raw)) end++;
+      while (end < this.words.length - 1 && !isSentenceEndWord(this.words[end].raw)) end++;
       this.ttsEndIndex = end;
       const slice = this.words.slice(startIndex, end + 1);
       const text = slice.map((w) => w.raw).join(" ");
       if (!text.trim()) return;
       const utterance = new SpeechSynthesisUtterance(text);
+      utterance.lang = detectSpeechLang(text);
       utterance.rate = Math.max(0.7, Math.min(2.5, this.currentWpm / 190));
       window.speechSynthesis.speak(utterance);
     } catch (e) {
@@ -998,9 +1348,11 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.wordsSinceResume = 0;
     this.isRampingUp = false;
     this.activeSince = Date.now();
+    this.syncZenClass();
     if (this.pauseCardEl) this.pauseCardEl.addClass("sr-hidden");
     (0, import_obsidian2.setIcon)(this.playPauseBtn, "pause");
-    this.playPauseBtn.setAttribute("title", "\u041F\u0430\u0443\u0437\u0430 (\u041F\u0440\u043E\u0431\u0435\u043B)");
+    this.playPauseBtn.setAttribute("title", this.t.pauseTitle);
+    this.updateContext();
     if (this.settings.enableTts) {
       this.speakFromCurrentSentence();
     }
@@ -1013,6 +1365,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   pause(triggeredByUser = true) {
     this.isPlaying = false;
     this.accumulateActiveTime();
+    this.syncZenClass();
     this.stopTts();
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -1020,14 +1373,14 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     }
     if (this.playPauseBtn) {
       (0, import_obsidian2.setIcon)(this.playPauseBtn, "play");
-      this.playPauseBtn.setAttribute("title", "\u0421\u0442\u0430\u0440\u0442 (\u041F\u0440\u043E\u0431\u0435\u043B)");
+      this.playPauseBtn.setAttribute("title", this.t.playTitle);
     }
     if (triggeredByUser && this.settings.rewindOnPause && this.wordsSinceResume >= 3) {
       const rewind = Math.min(this.settings.rewindOnPauseWords, this.wordsSinceResume);
       const newIdx = Math.max(0, this.currentIndex - rewind);
       if (newIdx !== this.currentIndex) {
-        this.sessionWordsRead = Math.max(0, this.sessionWordsRead - (this.currentIndex - newIdx));
-        this.wordsSinceResume = Math.max(0, this.wordsSinceResume - rewind);
+        this.rewoundWordsDebt += this.currentIndex - newIdx;
+        this.wordsSinceResume = 0;
         this.currentIndex = newIdx;
         this.updateWordDisplay();
       }
@@ -1061,6 +1414,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   }
   goToWord(index) {
     this.completed = false;
+    this.finalChunkStart = null;
     this.hasInteracted = true;
     if (this.timer !== null) {
       window.clearTimeout(this.timer);
@@ -1111,13 +1465,29 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.updateWpmDisplay();
     this.timer = window.setTimeout(() => {
       const consumed = Math.min(stepSize, this.words.length - this.currentIndex);
-      this.sessionWordsRead += consumed;
+      if (this.rewoundWordsDebt > 0) {
+        const absorbed = Math.min(this.rewoundWordsDebt, consumed);
+        this.rewoundWordsDebt -= absorbed;
+        this.sessionWordsRead += consumed - absorbed;
+      } else {
+        this.sessionWordsRead += consumed;
+      }
       this.sessionMaxWpm = Math.max(this.sessionMaxWpm, effectiveWpm);
       this.wordsSinceResume += consumed;
+      if (this.settings.autoAccelerate && this.settings.autoAccelerateIntervalWords > 0) {
+        this.wordsSinceAcceleration += consumed;
+        if (this.wordsSinceAcceleration >= this.settings.autoAccelerateIntervalWords) {
+          this.wordsSinceAcceleration %= this.settings.autoAccelerateIntervalWords;
+          const cap = Math.max(this.currentWpm, this.settings.maxWpmLimit || 600);
+          this.currentWpm = Math.min(cap, this.currentWpm + (this.settings.autoAccelerateStep || 10));
+        }
+      }
       if (this.currentIndex + consumed >= this.words.length) {
         this.completed = true;
+        this.finalChunkStart = this.currentIndex;
         this.currentIndex = this.words.length - 1;
-        this.updateProgress();
+        if (stepSize > 1) this.updateWordDisplay();
+        else this.updateProgress();
         this.pause(false);
         return;
       }
@@ -1174,9 +1544,12 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
     this.pauseCardEl.empty();
     this.pauseCardEl.addClass("sr-pause-card");
     const head = this.pauseCardEl.createDiv({ cls: "sr-pause-card-head" });
-    head.createSpan({ text: "\u23F8 \u041F\u0430\u0443\u0437\u0430", cls: "sr-pause-card-title" });
+    head.createSpan({ text: this.t.pauseTitleText, cls: "sr-pause-card-title" });
     head.createSpan({
-      text: ` \xB7 ${summary.wordsRead.toLocaleString()} \u0441\u043B\u043E\u0432 \u0437\u0430 ${formatDuration(summary.readSeconds)}`,
+      text: this.t.pauseSubText(
+        summary.wordsRead.toLocaleString(),
+        formatDuration(summary.readSeconds, this.lang)
+      ),
       cls: "sr-pause-card-sub"
     });
     if (summary.wordsRead > 0) {
@@ -1186,18 +1559,18 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
         cell.createDiv({ text: value, cls: "sr-pause-metric-value" });
         cell.createDiv({ text: label, cls: "sr-pause-metric-label" });
       };
-      metric("\u0441\u0440\u0435\u0434\u043D\u044F\u044F \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C", `${summary.avgWpm} WPM`);
-      metric("\u0431\u044B\u0441\u0442\u0440\u0435\u0435 \u043E\u0431\u044B\u0447\u043D\u043E\u0433\u043E", `\xD7${summary.speedup}`);
-      metric("\u0441\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E", formatDuration(summary.savedSeconds));
-      metric("\u0434\u043E \u043A\u043E\u043D\u0446\u0430", formatDuration(summary.remainingMinutes * 60));
+      metric(this.t.metricAvgWpm, `${summary.avgWpm} WPM`);
+      metric(this.t.metricSpeedup, `\xD7${summary.speedup}`);
+      metric(this.t.metricSaved, formatDuration(summary.savedSeconds, this.lang));
+      metric(this.t.metricRemaining, formatDuration(summary.remainingMinutes * 60, this.lang));
     }
     this.pauseCardEl.createDiv({
-      text: buildMotivationLine(summary.avgWpm, this.currentWpm),
+      text: buildMotivationLine(summary.avgWpm, this.currentWpm, this.lang),
       cls: "sr-pause-card-motivation"
     });
     const pct = calculateProgressPercent(this.currentIndex, this.words.length);
     this.pauseCardEl.createDiv({
-      text: `\u041F\u0440\u043E\u0433\u0440\u0435\u0441\u0441 ${pct}% \xB7 ${this.currentIndex + 1} / ${this.words.length} \u0441\u043B\u043E\u0432`,
+      text: this.t.pauseProgress(pct, this.currentIndex + 1, this.words.length),
       cls: "sr-pause-card-progress"
     });
     this.pauseCardEl.removeClass("sr-hidden");
@@ -1211,7 +1584,8 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
       this.focusEl.addClass("sr-hidden");
       this.suffixEl.addClass("sr-hidden");
       this.chunkEl.removeClass("sr-hidden");
-      const chunkSlice = this.words.slice(this.currentIndex, this.currentIndex + chunkSize);
+      const chunkStart = this.completed && this.finalChunkStart !== null ? this.finalChunkStart : this.currentIndex;
+      const chunkSlice = this.words.slice(chunkStart, chunkStart + chunkSize);
       this.chunkEl.empty();
       for (const w of chunkSlice) {
         const itemSpan = this.chunkEl.createSpan({ cls: "sr-chunk-word" });
@@ -1249,7 +1623,7 @@ var SpeedReaderModal = class extends import_obsidian2.Modal {
   updateTimeLeft() {
     if (!this.timeLeftLabel) return;
     const remainingWords = this.words.length - (this.currentIndex + 1);
-    this.timeLeftLabel.setText(formatTimeRemaining(remainingWords, this.currentWpm));
+    this.timeLeftLabel.setText(formatTimeRemaining(remainingWords, this.currentWpm, this.lang));
   }
   updateContext() {
     if (!this.contextEl) return;
@@ -1274,9 +1648,16 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
+    this.statusBarEl = null;
   }
   async onload() {
     await this.loadSettings();
+    if (typeof this.addStatusBarItem === "function") {
+      this.statusBarEl = this.addStatusBarItem();
+      this.statusBarEl.addClass("sr-status-bar-item");
+      this.statusBarEl.onclick = () => this.speedReadActiveView();
+      this.updateStatusBar();
+    }
     this.addRibbonIcon("book-open", "Speed read note", () => {
       this.speedReadActiveView();
     });
@@ -1331,8 +1712,18 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
           content,
           ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note",
           noteKey,
-          (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
+          {
+            onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
+            onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
+          }
         ).open();
+      }
+    });
+    this.addCommand({
+      id: "speed-read-from-cursor",
+      name: "Speed read from Cursor",
+      editorCallback: (editor, view) => {
+        this.speedReadFromCursor(editor, view);
       }
     });
     this.addCommand({
@@ -1342,12 +1733,15 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         const stats = this.settings.stats;
         const savedMin = calculateTimeSavedMinutes(stats.totalWordsRead, stats.totalSecondsRead);
         const mins = Math.round(stats.totalSecondsRead / 60 * 10) / 10;
+        const lang = resolveLanguage(this.settings.uiLanguage);
         new import_obsidian3.Notice(
-          `\u{1F4CA} \u0421\u043A\u043E\u0440\u043E\u0447\u0442\u0435\u043D\u0438\u0435:
-\u2022 \u041F\u0440\u043E\u0447\u0438\u0442\u0430\u043D\u043E \u0441\u043B\u043E\u0432: ${stats.totalWordsRead.toLocaleString()}
-\u2022 \u0412\u0440\u0435\u043C\u044F: ${mins} \u043C\u0438\u043D (${stats.sessionsCount} \u0441\u0435\u0441\u0441\u0438\u0439)
-\u2022 \u041C\u0430\u043A\u0441 \u0441\u043A\u043E\u0440\u043E\u0441\u0442\u044C: ${stats.maxWpm || this.settings.defaultWpm} WPM
-\u2022 \u0421\u044D\u043A\u043E\u043D\u043E\u043C\u043B\u0435\u043D\u043E: ~${savedMin} \u043C\u0438\u043D`,
+          I18N[lang].statsNotice(
+            stats.totalWordsRead.toLocaleString(),
+            mins,
+            stats.sessionsCount,
+            stats.maxWpm || this.settings.defaultWpm,
+            savedMin
+          ),
           8e3
         );
       }
@@ -1368,6 +1762,11 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
             });
           });
         }
+      })
+    );
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.updateStatusBar();
       })
     );
     this.addSettingTab(new SpeedReaderSettingTab(this.app, this));
@@ -1497,9 +1896,69 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
         content,
         ((_d = activeView.file) == null ? void 0 : _d.basename) || "Active Note",
         noteKey,
-        (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
+        {
+          onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
+          onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
+        }
       ).open();
     }
+  }
+  /** Reads the whole note starting from the editor cursor. */
+  speedReadFromCursor(editor, view) {
+    var _a, _b, _c, _d;
+    const content = editor.getValue();
+    if (!content || !content.trim()) {
+      new import_obsidian3.Notice("Speed reader: Active note is empty.");
+      return;
+    }
+    let cursorOffset = 0;
+    if (typeof editor.getCursor === "function" && typeof editor.posToOffset === "function") {
+      cursorOffset = editor.posToOffset(editor.getCursor());
+    } else if (typeof editor.getCursor === "function") {
+      const pos = editor.getCursor();
+      const lines = content.split("\n");
+      for (let i = 0; i < pos.line && i < lines.length; i++) {
+        cursorOffset += lines[i].length + 1;
+      }
+      cursorOffset += pos.ch;
+    }
+    const words = parseWords(content, {
+      pauseOnPunctuation: this.settings.pauseOnPunctuation,
+      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
+      commaPauseMultiplier: this.settings.commaPauseMultiplier,
+      spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: (_a = this.settings.orpWidth) != null ? _a : 1
+    });
+    const initialIndex = findWordIndexAtOffset(words, cursorOffset);
+    const noteKey = ((_b = view.file) == null ? void 0 : _b.path) || ((_c = view.file) == null ? void 0 : _c.basename) || "Active Note";
+    new SpeedReaderModal(this.app, this, content, ((_d = view.file) == null ? void 0 : _d.basename) || "Active Note", noteKey, {
+      initialIndex,
+      onSyncCursor: (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset),
+      onHighlightSentence: (startWord, endWord) => this.highlightSentenceInEditor(editor, startWord, endWord)
+    }).open();
+  }
+  /** Wraps the current sentence in ==highlight== inside the open note. */
+  highlightSentenceInEditor(editor, startWord, endWord) {
+    if (typeof startWord.charOffset !== "number" || typeof endWord.charOffset !== "number") {
+      return false;
+    }
+    const doc = editor.getValue();
+    const startOffset = startWord.charOffset;
+    const endOffset = Math.min(doc.length, endWord.charOffset + endWord.raw.length);
+    if (startOffset < 0 || endOffset <= startOffset) return false;
+    const slice = doc.slice(startOffset, endOffset);
+    if (!slice.trim() || slice.includes("\n\n")) return false;
+    if (doc.slice(Math.max(0, startOffset - 2), startOffset) === "==") return true;
+    const wrapped = `==${slice}==`;
+    if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
+      editor.replaceRange(wrapped, editor.offsetToPos(startOffset), editor.offsetToPos(endOffset));
+      return true;
+    }
+    if (typeof editor.setValue === "function") {
+      editor.setValue(doc.slice(0, startOffset) + wrapped + doc.slice(endOffset));
+      return true;
+    }
+    return false;
   }
   syncEditorCursor(editor, rawWord, charOffset) {
     if (typeof charOffset === "number" && charOffset >= 0) {
@@ -1519,6 +1978,37 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
       editor.scrollIntoView({ from: pos, to: pos }, true);
     }
   }
+  /** Updates the status bar reading estimate for the active note. */
+  updateStatusBar() {
+    var _a, _b;
+    if (!this.statusBarEl) return;
+    const bar = this.statusBarEl;
+    const hide = () => {
+      bar.setText("");
+      bar.addClass("sr-hidden");
+    };
+    if (!this.settings.showStatusBar) return hide();
+    const activeView = this.app.workspace.getActiveViewOfType(import_obsidian3.MarkdownView);
+    if (!(activeView == null ? void 0 : activeView.editor)) return hide();
+    const content = activeView.editor.getValue();
+    if (!content || !content.trim()) return hide();
+    const words = parseWords(content, {
+      pauseOnPunctuation: false,
+      sentencePauseMultiplier: 1,
+      commaPauseMultiplier: 1,
+      spritzVariableTiming: false
+    });
+    if (words.length === 0) return hide();
+    const noteKey = ((_a = activeView.file) == null ? void 0 : _a.path) || ((_b = activeView.file) == null ? void 0 : _b.basename) || "";
+    const saved = noteKey && this.settings.rememberProgress ? this.settings.noteProgress[noteKey] : null;
+    const currentIndex = saved && saved.index < words.length ? saved.index : 0;
+    const pct = saved ? calculateProgressPercent(currentIndex, words.length) : 0;
+    const remaining = Math.max(0, words.length - currentIndex);
+    const lang = resolveLanguage(this.settings.uiLanguage);
+    const timeText = formatTimeRemaining(remaining, this.settings.defaultWpm, lang).replace(" left", "");
+    bar.removeClass("sr-hidden");
+    bar.setText(pct > 0 ? `\u{1F4D6} ${pct}% \xB7 ${timeText}` : `\u{1F4D6} ${timeText}`);
+  }
   async loadSettings() {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data);
@@ -1533,5 +2023,6 @@ var SpeedReaderPlugin = class extends import_obsidian3.Plugin {
   }
   async saveSettings() {
     await this.saveData(this.settings);
+    this.updateStatusBar();
   }
 };

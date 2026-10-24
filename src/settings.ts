@@ -7,6 +7,7 @@ import { PluginSettingTab } from "obsidian";
 import type { App, SettingDefinitionItem } from "obsidian";
 import type SpeedReaderPlugin from "./main";
 import { calculateTimeSavedMinutes } from "./speedEngine";
+import type { UiLanguage } from "./i18n";
 
 export interface NoteProgressRecord {
   index: number;
@@ -24,6 +25,7 @@ export interface ReaderStats {
 export type ReaderFont = "theme" | "golos" | "atkinson";
 
 export interface SpeedReaderSettings {
+  uiLanguage: UiLanguage;
   defaultWpm: number;
   fontSize: number;
   /** Шрифт окна чтения: тема Obsidian, Golos Text (кириллица) или Atkinson Hyperlegible (латиница). */
@@ -50,6 +52,13 @@ export interface SpeedReaderSettings {
   paragraphPauseMultiplier: number;
   pauseOnNumbersAndAcronyms: boolean;
 
+  // Trainer / Zen
+  zenMode: boolean;
+  autoAccelerate: boolean;
+  autoAccelerateStep: number;
+  autoAccelerateIntervalWords: number;
+  maxWpmLimit: number;
+
   // Top Feature 2: Display & Chunking
   chunkSize: number; // 1, 2, or 3 words
   bionicInChunks: boolean;
@@ -57,6 +66,7 @@ export interface SpeedReaderSettings {
   // Top Feature 3: Progress & Sync
   rememberProgress: boolean;
   syncCursorOnClose: boolean;
+  showStatusBar: boolean;
   noteProgress: Record<string, NoteProgressRecord>;
 
   // Spritz Redicle & Timing
@@ -71,6 +81,7 @@ export interface SpeedReaderSettings {
 }
 
 export const DEFAULT_SETTINGS: SpeedReaderSettings = {
+  uiLanguage: "auto",
   defaultWpm: 350,
   fontSize: 44,
   readerFont: "theme",
@@ -94,6 +105,13 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   paragraphPauseMultiplier: 2.5,
   pauseOnNumbersAndAcronyms: true,
 
+  // Trainer / Zen
+  zenMode: false,
+  autoAccelerate: false,
+  autoAccelerateStep: 10,
+  autoAccelerateIntervalWords: 200,
+  maxWpmLimit: 600,
+
   // Top Feature 2
   chunkSize: 1,
   bionicInChunks: true,
@@ -101,6 +119,7 @@ export const DEFAULT_SETTINGS: SpeedReaderSettings = {
   // Top Feature 3
   rememberProgress: true,
   syncCursorOnClose: true,
+  showStatusBar: true,
   noteProgress: {},
 
   // Spritz Redicle & Timing
@@ -154,6 +173,8 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
       value = value === "center" ? "center" : "spritz";
     } else if (key === "themeMode") {
       value = ["dark", "light", "sepia"].includes(String(value)) ? String(value) : "default";
+    } else if (key === "uiLanguage") {
+      value = value === "ru" || value === "en" ? value : "auto";
     } else if (key === "stepWordCount") {
       const step = parseInt(String(value), 10);
       value = Number.isFinite(step) ? Math.max(1, Math.min(50, step)) : DEFAULT_SETTINGS.stepWordCount;
@@ -215,6 +236,21 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
         type: "group",
         heading: "Скорость и шрифт",
         items: [
+          {
+            name: "Язык интерфейса ридера",
+            desc: "Автоматически по языку Obsidian, русский или английский",
+            aliases: ["uiLanguage", "language", "locale"],
+            control: {
+              type: "dropdown",
+              key: "uiLanguage",
+              defaultValue: String(DEFAULT_SETTINGS.uiLanguage),
+              options: {
+                auto: "Авто (по языку Obsidian)",
+                ru: "Русский",
+                en: "English",
+              },
+            },
+          },
           {
             name: "Скорость по умолчанию (WPM)",
             desc: "Слов в минуту при открытии (меняется на лету стрелками ↑↓)",
@@ -291,6 +327,12 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
         heading: "Умный темп (Smart Pacing & Rhythm)",
         items: [
           {
+            name: "Дзен-режим во время чтения",
+            desc: "Приглушать шапку, ползунок и кнопки во время воспроизведения (клавиша F)",
+            aliases: ["zenMode", "distraction free"],
+            control: { type: "toggle", key: "zenMode", defaultValue: DEFAULT_SETTINGS.zenMode },
+          },
+          {
             name: "Плавный разгон (Speed Ramp-up)",
             desc: "Начинать чтение с 65% скорости и плавно разгоняться за первые слова, чтобы мозг адаптировался",
             aliases: ["enableRampUp"],
@@ -301,6 +343,30 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
             desc: "За сколько первых слов достигать целевой скорости WPM",
             aliases: ["rampUpWords"],
             control: { type: "slider", key: "rampUpWords", min: 5, max: 40, step: 5, defaultValue: DEFAULT_SETTINGS.rampUpWords },
+          },
+          {
+            name: "Режим «Тренер» (авто-ускорение)",
+            desc: "Постепенно повышать целевую скорость WPM по мере чтения длинного текста",
+            aliases: ["autoAccelerate", "trainer"],
+            control: { type: "toggle", key: "autoAccelerate", defaultValue: DEFAULT_SETTINGS.autoAccelerate },
+          },
+          {
+            name: "Шаг авто-ускорения (+WPM)",
+            desc: "На сколько WPM повышать скорость за один шаг",
+            aliases: ["autoAccelerateStep"],
+            control: { type: "slider", key: "autoAccelerateStep", min: 5, max: 50, step: 5, defaultValue: DEFAULT_SETTINGS.autoAccelerateStep },
+          },
+          {
+            name: "Интервал авто-ускорения (слов)",
+            desc: "Через сколько прочитанных слов повышать скорость",
+            aliases: ["autoAccelerateIntervalWords"],
+            control: { type: "slider", key: "autoAccelerateIntervalWords", min: 50, max: 500, step: 50, defaultValue: DEFAULT_SETTINGS.autoAccelerateIntervalWords },
+          },
+          {
+            name: "Потолок авто-ускорения (WPM)",
+            desc: "Максимальная скорость, до которой разгоняет режим «Тренер»",
+            aliases: ["maxWpmLimit"],
+            control: { type: "slider", key: "maxWpmLimit", min: 200, max: 1200, step: 25, defaultValue: DEFAULT_SETTINGS.maxWpmLimit },
           },
           {
             name: "Итоги и мотивация на паузе",
@@ -427,6 +493,12 @@ export class SpeedReaderSettingTab extends PluginSettingTab {
         type: "group",
         heading: "Аудио-сопровождение (Text-to-Speech / TTS)",
         items: [
+          {
+            name: "Показывать прогресс в статус-баре",
+            desc: "Процент прочтения и оценка времени для активной заметки в нижней панели Obsidian",
+            aliases: ["showStatusBar", "status bar"],
+            control: { type: "toggle", key: "showStatusBar", defaultValue: DEFAULT_SETTINGS.showStatusBar },
+          },
           {
             name: "Включить озвучку (TTS)",
             desc: "Воспроизводить читаемый текст голосом в реальном времени через системный синтезатор речи",

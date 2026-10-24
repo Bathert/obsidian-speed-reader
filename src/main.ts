@@ -6,13 +6,15 @@
 import { Editor, MarkdownFileInfo, MarkdownView, Notice, Plugin } from "obsidian";
 import { DEFAULT_SETTINGS, SpeedReaderSettings, SpeedReaderSettingTab } from "./settings";
 import { SpeedReaderModal } from "./readerModal";
-import { parseWords } from "./textParser";
+import { findWordIndexAtOffset, ParsedWord, parseWords } from "./textParser";
 import {
   calculateProgressPercent,
   calculateTimeSavedMinutes,
   calculateWordDelayMs,
   findNextSentenceStart,
+  formatTimeRemaining,
 } from "./speedEngine";
+import { I18N, resolveLanguage } from "./i18n";
 
 /** One line of the built-in in-app diagnostics. */
 export interface SelfCheckResult {
@@ -23,9 +25,18 @@ export interface SelfCheckResult {
 
 export default class SpeedReaderPlugin extends Plugin {
   settings: SpeedReaderSettings = DEFAULT_SETTINGS;
+  private statusBarEl: HTMLElement | null = null;
 
   async onload() {
     await this.loadSettings();
+
+    // Optional status bar indicator (absent in headless test harnesses).
+    if (typeof this.addStatusBarItem === "function") {
+      this.statusBarEl = this.addStatusBarItem();
+      this.statusBarEl.addClass("sr-status-bar-item");
+      this.statusBarEl.onclick = () => this.speedReadActiveView();
+      this.updateStatusBar();
+    }
 
     // Ribbon icon on the left sidebar
     this.addRibbonIcon("book-open", "Speed read note", () => {
@@ -85,8 +96,22 @@ export default class SpeedReaderPlugin extends Plugin {
           content,
           view.file?.basename || "Active Note",
           noteKey,
-          (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
+          {
+            onSyncCursor: (wordIndex, rawWord, charOffset) =>
+              this.syncEditorCursor(editor, rawWord, charOffset),
+            onHighlightSentence: (startWord, endWord) =>
+              this.highlightSentenceInEditor(editor, startWord, endWord),
+          }
         ).open();
+      },
+    });
+
+    // Command: read from the current cursor position
+    this.addCommand({
+      id: "speed-read-from-cursor",
+      name: "Speed read from Cursor",
+      editorCallback: (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+        this.speedReadFromCursor(editor, view);
       },
     });
 
@@ -98,12 +123,15 @@ export default class SpeedReaderPlugin extends Plugin {
         const stats = this.settings.stats;
         const savedMin = calculateTimeSavedMinutes(stats.totalWordsRead, stats.totalSecondsRead);
         const mins = Math.round((stats.totalSecondsRead / 60) * 10) / 10;
+        const lang = resolveLanguage(this.settings.uiLanguage);
         new Notice(
-          `📊 Скорочтение:\n` +
-          `• Прочитано слов: ${stats.totalWordsRead.toLocaleString()}\n` +
-          `• Время: ${mins} мин (${stats.sessionsCount} сессий)\n` +
-          `• Макс скорость: ${stats.maxWpm || this.settings.defaultWpm} WPM\n` +
-          `• Сэкономлено: ~${savedMin} мин`,
+          I18N[lang].statsNotice(
+            stats.totalWordsRead.toLocaleString(),
+            mins,
+            stats.sessionsCount,
+            stats.maxWpm || this.settings.defaultWpm,
+            savedMin
+          ),
           8000
         );
       },
@@ -128,6 +156,12 @@ export default class SpeedReaderPlugin extends Plugin {
               });
           });
         }
+      })
+    );
+
+    this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        this.updateStatusBar();
       })
     );
 
@@ -272,9 +306,83 @@ export default class SpeedReaderPlugin extends Plugin {
         content,
         activeView.file?.basename || "Active Note",
         noteKey,
-        (wordIndex, rawWord, charOffset) => this.syncEditorCursor(editor, rawWord, charOffset)
+        {
+          onSyncCursor: (wordIndex, rawWord, charOffset) =>
+            this.syncEditorCursor(editor, rawWord, charOffset),
+          onHighlightSentence: (startWord, endWord) =>
+            this.highlightSentenceInEditor(editor, startWord, endWord),
+        }
       ).open();
     }
+  }
+
+  /** Reads the whole note starting from the editor cursor. */
+  private speedReadFromCursor(editor: Editor, view: MarkdownView | MarkdownFileInfo) {
+    const content = editor.getValue();
+    if (!content || !content.trim()) {
+      new Notice("Speed reader: Active note is empty.");
+      return;
+    }
+
+    let cursorOffset = 0;
+    if (typeof editor.getCursor === "function" && typeof editor.posToOffset === "function") {
+      cursorOffset = editor.posToOffset(editor.getCursor());
+    } else if (typeof editor.getCursor === "function") {
+      const pos = editor.getCursor();
+      const lines = content.split("\n");
+      for (let i = 0; i < pos.line && i < lines.length; i++) {
+        cursorOffset += lines[i].length + 1;
+      }
+      cursorOffset += pos.ch;
+    }
+
+    const words = parseWords(content, {
+      pauseOnPunctuation: this.settings.pauseOnPunctuation,
+      sentencePauseMultiplier: this.settings.sentencePauseMultiplier,
+      commaPauseMultiplier: this.settings.commaPauseMultiplier,
+      spritzVariableTiming: this.settings.spritzVariableTiming,
+      orpWidth: this.settings.orpWidth ?? 1,
+    });
+    const initialIndex = findWordIndexAtOffset(words, cursorOffset);
+    const noteKey = view.file?.path || view.file?.basename || "Active Note";
+
+    new SpeedReaderModal(this.app, this, content, view.file?.basename || "Active Note", noteKey, {
+      initialIndex,
+      onSyncCursor: (wordIndex, rawWord, charOffset) =>
+        this.syncEditorCursor(editor, rawWord, charOffset),
+      onHighlightSentence: (startWord, endWord) =>
+        this.highlightSentenceInEditor(editor, startWord, endWord),
+    }).open();
+  }
+
+  /** Wraps the current sentence in ==highlight== inside the open note. */
+  private highlightSentenceInEditor(
+    editor: Editor,
+    startWord: ParsedWord,
+    endWord: ParsedWord
+  ): boolean {
+    if (typeof startWord.charOffset !== "number" || typeof endWord.charOffset !== "number") {
+      return false;
+    }
+    const doc = editor.getValue();
+    const startOffset = startWord.charOffset;
+    const endOffset = Math.min(doc.length, endWord.charOffset + endWord.raw.length);
+    if (startOffset < 0 || endOffset <= startOffset) return false;
+
+    const slice = doc.slice(startOffset, endOffset);
+    if (!slice.trim() || slice.includes("\n\n")) return false;
+    if (doc.slice(Math.max(0, startOffset - 2), startOffset) === "==") return true;
+
+    const wrapped = `==${slice}==`;
+    if (typeof editor.replaceRange === "function" && typeof editor.offsetToPos === "function") {
+      editor.replaceRange(wrapped, editor.offsetToPos(startOffset), editor.offsetToPos(endOffset));
+      return true;
+    }
+    if (typeof editor.setValue === "function") {
+      editor.setValue(doc.slice(0, startOffset) + wrapped + doc.slice(endOffset));
+      return true;
+    }
+    return false;
   }
 
   private syncEditorCursor(editor: Editor, rawWord: string, charOffset?: number) {
@@ -303,6 +411,43 @@ export default class SpeedReaderPlugin extends Plugin {
     }
   }
 
+  /** Updates the status bar reading estimate for the active note. */
+  updateStatusBar() {
+    if (!this.statusBarEl) return;
+    const bar = this.statusBarEl;
+    const hide = () => {
+      bar.setText("");
+      bar.addClass("sr-hidden");
+    };
+
+    if (!this.settings.showStatusBar) return hide();
+
+    const activeView = this.app.workspace.getActiveViewOfType(MarkdownView);
+    if (!activeView?.editor) return hide();
+
+    const content = activeView.editor.getValue();
+    if (!content || !content.trim()) return hide();
+
+    const words = parseWords(content, {
+      pauseOnPunctuation: false,
+      sentencePauseMultiplier: 1,
+      commaPauseMultiplier: 1,
+      spritzVariableTiming: false,
+    });
+    if (words.length === 0) return hide();
+
+    const noteKey = activeView.file?.path || activeView.file?.basename || "";
+    const saved = noteKey && this.settings.rememberProgress ? this.settings.noteProgress[noteKey] : null;
+    const currentIndex = saved && saved.index < words.length ? saved.index : 0;
+    const pct = saved ? calculateProgressPercent(currentIndex, words.length) : 0;
+    const remaining = Math.max(0, words.length - currentIndex);
+    const lang = resolveLanguage(this.settings.uiLanguage);
+    const timeText = formatTimeRemaining(remaining, this.settings.defaultWpm, lang).replace(" left", "");
+
+    bar.removeClass("sr-hidden");
+    bar.setText(pct > 0 ? `📖 ${pct}% · ${timeText}` : `📖 ${timeText}`);
+  }
+
   async loadSettings() {
     const data: unknown = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data as Partial<SpeedReaderSettings> | null);
@@ -318,5 +463,6 @@ export default class SpeedReaderPlugin extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    this.updateStatusBar();
   }
 }

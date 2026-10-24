@@ -804,3 +804,70 @@ OTHER DEALINGS IN THE FONT SOFTWARE.
   .sr-modal-container .sr-frame { min-height: 190px; padding: 28px 20px; margin-top: 16px; }
   .sr-modal-container .sr-controls { gap: 8px; padding-top: 12px; }
 }
+
+/* Table of contents selector in the reader header */
+.sr-modal-container .sr-title-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.sr-modal-container .sr-toc-select {
+  max-width: 240px;
+  font-size: 12px;
+  height: 28px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--sr-inset, var(--background-secondary));
+  color: var(--text-muted);
+  border: 1px solid var(--sr-line, var(--background-modifier-border));
+}
+
+/* Interactive context preview on pause */
+.sr-modal-container .sr-context-preview.sr-context-expanded {
+  white-space: normal;
+  line-height: 1.65;
+  max-height: 4.9em;
+  overflow-y: auto;
+}
+
+.sr-modal-container .sr-context-word {
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 1px 2px;
+  transition: color 0.12s ease, background-color 0.12s ease;
+}
+
+.sr-modal-container .sr-context-word:hover {
+  color: var(--text-normal);
+  background: var(--sr-inset, var(--background-secondary));
+}
+
+/* Active toggle button state (zen mode) */
+.sr-modal-container .sr-icon-btn.sr-btn-active {
+  color: var(--interactive-accent);
+  border-color: var(--interactive-accent);
+}
+
+/* Zen mode: dim everything but the word while playing */
+.sr-modal-container.sr-zen-active .sr-header,
+.sr-modal-container.sr-zen-active .sr-context-preview,
+.sr-modal-container.sr-zen-active .sr-progress-container,
+.sr-modal-container.sr-zen-active .sr-controls {
+  opacity: 0.08;
+  transition: opacity 0.25s ease;
+}
+
+.sr-modal-container.sr-zen-active:hover .sr-header,
+.sr-modal-container.sr-zen-active:hover .sr-context-preview,
+.sr-modal-container.sr-zen-active:hover .sr-progress-container,
+.sr-modal-container.sr-zen-active:hover .sr-controls {
+  opacity: 1;
+}
+
+/* Status bar item */
+.sr-status-bar-item {
+  cursor: pointer;
+}
